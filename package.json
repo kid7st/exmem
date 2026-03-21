@@ -1,0 +1,40 @@
+{
+  "name": "git-mem",
+  "version": "0.1.0",
+  "description": "External cognitive memory system for LLM agents — git-versioned context files with [pinned] protection and two-phase update",
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./pi-extension": {
+      "types": "./dist/pi-extension/index.d.ts",
+      "import": "./dist/pi-extension/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "test": "node --test --experimental-transform-types --no-warnings src/tests/*.test.ts",
+    "clean": "rm -rf dist"
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "license": "MIT",
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0"
+  },
+  "peerDependencies": {
+    "@mariozechner/pi-coding-agent": ">=0.40.0"
+  },
+  "peerDependenciesMeta": {
+    "@mariozechner/pi-coding-agent": {
+      "optional": true
+    }
+  }
+}
