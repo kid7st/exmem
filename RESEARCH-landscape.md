@@ -238,3 +238,58 @@ Mem0 的经验是配合冲突检测和去重。
 | 保持核心 context 小 | Letta 最新实践 (8-16K) |
 | 注意力管理 > 存储 | Memory-Probe (ICLR 2026) |
 | Git 版本控制 context | git-context-controller (独立验证) |
+
+---
+
+## 六、参考文献与来源
+
+### 直接相关（同一问题域）
+
+| # | 项目/论文 | 论文 | 代码 |
+|---|----------|------|------|
+| 1 | **Memory-Probe** — Retrieval vs Utilization (ICLR 2026 WS) | [arxiv:2603.02473](https://arxiv.org/abs/2603.02473) | [github](https://github.com/boqiny/memory-probe) |
+| 2 | **LLM Agent Memory Survey** (ACM TOIS 2025, 477★) | [arxiv:2404.13501](https://arxiv.org/abs/2404.13501) | [github](https://github.com/nuster1128/LLM_Agent_Memory_Survey) |
+| 3 | **Mem0** — Universal memory layer (YC S24, 50K★) | [arxiv:2504.19413](https://arxiv.org/abs/2504.19413) | [github](https://github.com/mem0ai/mem0) |
+| 4 | **claude-mem** — Claude Code memory plugin (39K★) | — | [github](https://github.com/thedotmack/claude-mem) |
+| 5 | **Letta / MemGPT** — OS-style memory management | [arxiv:2310.08560](https://arxiv.org/abs/2310.08560) | [github](https://github.com/letta-ai/letta) |
+| 6 | **Zep** — Temporal knowledge graph | [arxiv:2501.13956](https://arxiv.org/abs/2501.13956) | [github](https://github.com/getzep/zep) |
+| 7 | **HiAgent** — Hierarchical working memory (ACL 2025) | [arxiv:2408.09559](https://arxiv.org/abs/2408.09559) | [github](https://github.com/HiAgent2024/HiAgent) |
+| 8 | **AgentFold** — Proactive context management (Alibaba) | [arxiv:2510.24699](https://arxiv.org/abs/2510.24699) | [github](https://github.com/Alibaba-NLP/DeepResearch) |
+| 9 | **MemAgent** — RL-based memory agent (ByteDance) | [arxiv:2507.02259](https://arxiv.org/abs/2507.02259) | [github](https://github.com/BytedTsinghua-SIA/MemAgent) |
+| 10 | **MEM1** — Memory + reasoning synergy (MIT) | [arxiv:2506.15841](https://arxiv.org/abs/2506.15841) | [github](https://github.com/MIT-MI/MEM1) |
+| 11 | **MemOS** — Memory OS of AI Agent (EMNLP 2025) | [arxiv:2506.06326](https://arxiv.org/abs/2506.06326) | [github](https://github.com/BAI-LAB/MemoryOS) |
+| 12 | **A-MEM** — Agentic Memory (NeurIPS 2025) | [arxiv:2502.12110](https://arxiv.org/abs/2502.12110) | [github](https://github.com/agiresearch/A-mem) |
+| 13 | **git-context-controller** — Git-like agent memory | — | [github](https://github.com/Owner807/git-context-controller) |
+| 14 | **SeCom** — Memory construction & retrieval (Microsoft, ICLR 2025) | [arxiv:2502.05589](https://arxiv.org/abs/2502.05589) | [github](https://github.com/microsoft/SeCom) |
+| 15 | **MemoRAG** — Global memory enhanced RAG (TheWebConf 2025) | [arxiv:2409.05591](https://arxiv.org/abs/2409.05591) | [github](https://github.com/qhjqhj00/MemoRAG) |
+| 16 | **LightMem** — Lightweight memory-augmented generation | [arxiv:2510.18866](https://arxiv.org/abs/2510.18866) | [github](https://github.com/zjunlp/LightMem) |
+| 17 | **MemOS** (MemTensor) — Memory operating system | [arxiv:2507.03724](https://arxiv.org/abs/2507.03724) | [github](https://github.com/MemTensor/MemOS) |
+| 18 | **Dynamic Cheatsheet** — Adaptive memory at test time | [arxiv:2504.07952](https://arxiv.org/abs/2504.07952) | [github](https://github.com/suzgunmirac/dynamic-cheatsheet) |
+
+### 注意力与 Context 基础研究
+
+| # | 论文 | 链接 |
+|---|------|------|
+| 19 | **Lost in the Middle** — U-shaped attention in long context (Stanford, 2023) | [arxiv:2307.03172](https://arxiv.org/abs/2307.03172) |
+| 20 | **Attention Sinks** — First-token attention concentration (2023) | [arxiv:2309.17453](https://arxiv.org/abs/2309.17453) |
+| 21 | **RAG vs Long Context** — Complementary, not competing (2024) | [arxiv:2407.16833](https://arxiv.org/abs/2407.16833) |
+| 22 | **LLMLingua** — Prompt compression (2023) | [arxiv:2310.05736](https://arxiv.org/abs/2310.05736) |
+| 23 | **RAPTOR** — Recursive abstractive tree retrieval (2024) | [arxiv:2401.18059](https://arxiv.org/abs/2401.18059) |
+| 24 | **ReadAgent** — Gist memory for long documents (ICML 2024) | [arxiv:2402.09727](https://arxiv.org/abs/2402.09727) |
+
+### 认知科学与 Agent 架构
+
+| # | 论文 | 链接 |
+|---|------|------|
+| 25 | **Generative Agents** — Believable simulacra (Stanford, 2023) | [arxiv:2304.03442](https://arxiv.org/abs/2304.03442) |
+| 26 | **CoALA** — Cognitive Architectures for Language Agents (2023) | [arxiv:2309.02427](https://arxiv.org/abs/2309.02427) |
+| 27 | **Reflexion** — Reflection-driven memory (2023) | [arxiv:2303.11366](https://arxiv.org/abs/2303.11366) |
+| 28 | **Voyager** — Skill library for agents (2023) | [arxiv:2305.16291](https://arxiv.org/abs/2305.16291) |
+| 29 | **MemoryBank** — Long-term memory with forgetting curve (AAAI 2024) | [arxiv:2305.10250](https://arxiv.org/abs/2305.10250) |
+| 30 | **Complementary Learning Systems** (McClelland et al., 1995) | [doi:10.1037/0033-295X.102.3.419](https://doi.org/10.1037/0033-295X.102.3.419) |
+
+### 综合索引
+
+| # | 资源 | 链接 |
+|---|------|------|
+| 31 | **Awesome Efficient Agents** — Survey & paper list | [github](https://github.com/yxf203/Awesome-Efficient-Agents) |
