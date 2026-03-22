@@ -2,139 +2,188 @@
 
 **External memory for LLM agents.**
 
-将 Agent 的心智模型（目标、决策、约束、验证结果等）外化为 Git 版本控制的 Context 文件，使其在 compaction 后可检索、可回溯、可比较。
+[中文文档](docs/README.zh-CN.md)
 
-## 问题
+exmem externalizes your AI agent's mental model — goals, decisions, constraints, experiment results — into Git-versioned context files that survive compaction. When context is compressed, nothing is lost. Every version can be recalled, diffed, and searched.
 
-LLM 的 context window 有限。对话超长后 compaction 将历史压缩为一段摘要——信息在多轮 compaction 中逐渐衰减，无法定向查询，无法回溯演化。
+## The Problem
 
-**对话是过程，Context 是产物。** exmem 将 Context 持久化在 git 仓库中，compaction 只是一次 commit，历史永远可以回来看。
+LLM agents have limited context windows. When conversations grow too long, compaction compresses the history into a brief summary. This process:
 
-## 前提条件
+1. **Regenerates from scratch** each time — information decays across multiple compactions
+2. **Produces flat text** — can't query a specific aspect ("what were v2's parameters?")
+3. **Discards history** — can't trace how understanding evolved
 
-- [Pi](https://github.com/badlogic/pi-mono) (>=0.40.0)
-- Git
+The raw conversation is still in Pi's session file, but **conversation is process, context is product**. Reconstructing context from raw conversation means re-processing everything — impractical.
 
-## 安装
+### Example
 
-```bash
-# 试用（不安装，当次生效）
-pi -e /path/to/exmem
-
-# 安装到全局（所有项目生效）
-pi install /path/to/exmem
-
-# 安装到项目（可与团队共享 .pi/settings.json）
-pi install -l /path/to/exmem
-
-# 从 Git 仓库安装（发布后可用）
-pi install git:github.com/user/exmem
-```
-
-安装后 pi 启动时自动加载，**无需额外配置**。
-
-> 建议在项目的 `.gitignore` 中加入 `.exmem/`，
-> 避免 exmem 的内部 git 仓库被提交到项目仓库中。
-
-## 安装后会发生什么
-
-1. Pi 启动时，exmem 在项目目录下创建 `.exmem/` 仓库（自动）
-2. System prompt 增加 "Context Memory" 说明，告诉 Agent 它有记忆能力
-3. 一个新工具 `ctx_update` 可用——Agent 可以随时将重要信息写入 context 文件
-4. 每次 compaction 时，exmem 自动将对话中的信息整合到 context 文件并 git commit
-
-## 工作原理
+During quantitative strategy development, after 4 rounds of parameter tuning:
 
 ```
-对话流 → Agent 处理 → ctx_update 记录重要信息 → git commit
-                                                      │
-                              git log / show / diff / grep
-                              随时可回溯任意历史版本
+v1: MA 10/20, RSI 70  → Sharpe 1.2
+v2: MA 10/30, RSI 70  → Sharpe 1.5  ← best
+v3: MA 10/30, RSI 65  → Sharpe 1.3
+v4: MA 20/50, RSI 70  → Sharpe 1.1
 ```
 
-### 两阶段记忆更新
+User: "v2 was best. Go back to v2 params and analyze how MA period affects Sharpe."
 
-**阶段 1：实时编码** — Agent 在对话中遇到重要信息时主动调用 `ctx_update`
+With standard compaction, v1-v3 have been compressed to "tested several parameter sets." The agent can't answer.
 
-**阶段 2：记忆固化** — compaction 触发时，LLM 审视即将压缩的对话 + 当前 context 文件，查漏补缺并 git commit
+## How exmem Solves This
 
-### Agent 如何使用记忆
+exmem **externalizes the agent's mental model** into structured context files, version-controlled with Git.
 
-**写入**（唯一的新工具）：
+```
+conversation → agent processes → ctx_update records key info → git commit
+                                                                    │
+                                        git log / show / diff / grep
+                                        any historical version recoverable
+```
+
+### Two-Phase Memory Update
+
+**Phase 1: Real-time encoding** — Agent calls `ctx_update` during conversation to capture important information as it happens (high fidelity, small increments)
+
+**Phase 2: Consolidation** — At compaction time, LLM reviews the conversation being compressed + current context files, fills gaps, and commits
+
+### How the Agent Uses Memory
+
+**Write** (single new tool):
 
 ```
 ctx_update(file="constraints.md", content="...", message="add MaxDD constraint")
 ```
 
-**读取**（使用已有的 read 和 bash）：
+**Read** (existing tools — no new tools needed):
 
 ```bash
-read(".exmem/context/strategy-params.md")                              # 当前 context
-bash("cd .exmem && git log --oneline -- context/strategy-params.md")   # 版本历史
-bash("cd .exmem && git show abc123:context/strategy-params.md")        # 历史版本
-bash("cd .exmem && git log --all --oneline --grep='Sharpe'")           # 搜索
-bash("cd .exmem && git diff abc123 def456 -- context/")                # 版本对比
+read(".exmem/context/strategy-params.md")                              # current context
+bash("cd .exmem && git log --oneline -- context/strategy-params.md")   # version history
+bash("cd .exmem && git show abc123:context/strategy-params.md")        # historical version
+bash("cd .exmem && git log --all --oneline --grep='Sharpe'")           # search
+bash("cd .exmem && git diff abc123 def456 -- context/")                # compare versions
 ```
 
-### 安全机制
+The agent already knows Git. No wrapper tools needed.
 
-- **`[pinned]`** — 关键约束标记为不可删除，代码级验证 + 自动恢复
-- **快照回滚** — 固化前 git commit 快照，验证失败自动回滚
-- **后置验证** — 5 项检查（_index.md 完整性、[pinned] 保留、大小预算、文件非空、解析成功）
-- **降级保底** — 任何失败自动回退到 Pi 默认 compaction，不会比没装 exmem 更差
+## Installation
 
-## 示例
+### Prerequisites
 
-量化策略开发中，经过 4 轮参数迭代后：
+- [Pi](https://github.com/badlogic/pi-mono) (>=0.40.0)
+- Git
+
+### Install
+
+```bash
+# Try without installing (current session only)
+pi -e /path/to/exmem
+
+# Install globally (all projects)
+pi install /path/to/exmem
+
+# Install per-project (shareable via .pi/settings.json)
+pi install -l /path/to/exmem
+
+# From Git repository (when published)
+pi install git:github.com/user/exmem
+```
+
+After installation, exmem loads automatically when Pi starts. **No configuration needed.**
+
+> Add `.exmem/` to your project's `.gitignore` to avoid committing
+> exmem's internal Git repository to your project.
+
+## What Happens After Installation
+
+1. Pi creates a `.exmem/` Git repository in your project directory (automatic)
+2. System prompt gains a "Context Memory" section explaining available memory tools
+3. A new `ctx_update` tool becomes available for recording important information
+4. Each compaction automatically consolidates conversation into context files and commits
+
+## Safety Mechanisms
+
+| Mechanism | Protects Against | Implementation |
+|-----------|-----------------|----------------|
+| Pre-consolidation snapshot | LLM producing bad output | `git commit` before consolidation |
+| Post-consolidation checks (5) | Obvious consolidation failures | Deterministic code checks |
+| `[pinned]` verification | Critical constraints being deleted | String matching + auto-recovery |
+| `[pinned]` conflict marking | Critical constraints being semantically overridden | Consolidation prompt rule |
+| Idempotent `ctx_update` | Duplicate commits from same content | Content comparison before commit |
+| Segmented processing | Quality loss on long conversations | Split at >40k tokens |
+| Fallback to Pi default | Total consolidation failure | Return `undefined` → Pi handles it |
+
+**Worst case = status quo.** If exmem fails completely, Pi falls back to its default compaction. You're never worse off than without exmem.
+
+## Example: Full Scenario
 
 ```
-用户: "v2 结果最好，回到 v2 参数，帮我分析 MA 周期和 Sharpe 的关系"
+── v1-v4 iteration (multiple conversations + compactions) ──
+
+Agent records each parameter change:
+  ctx_update("strategy-params.md", "...v2: MA 10/30, RSI 70...", "v2 params")
+  ctx_update("backtest-results.md", "...v2: Sharpe 1.5...", "v2 results")
+
+── User: "v2 was best, go back to v2 params" ──
 
 Agent:
   bash("cd .exmem && git log --oneline -- context/strategy-params.md")
-  → ghi9012  v2: MA 10/30, RSI 70
+  → abc1234  v4: MA 20/50
+    def5678  v3: MA 10/30 RSI 65
+    ghi9012  v2: MA 10/30 RSI 70     ← target
+    jkl3456  v1: MA 10/20
 
   bash("cd .exmem && git show ghi9012:context/strategy-params.md")
-  → 拿到 v2 完整参数
+  → gets v2 parameters
 
+── User: "Analyze how MA period affects Sharpe" ──
+
+Agent:
   bash("cd .exmem && git diff ghi9012 abc1234 -- context/strategy-params.md")
-  → MA 10/30 → 20/50
+  → MA fast 10→20, slow 30→50
 
   bash("cd .exmem && git diff ghi9012 abc1234 -- context/backtest-results.md")
-  → Sharpe 1.5 → 1.1
+  → Sharpe 1.5→1.1, MaxDD -15%→-22%
 
-  Agent: "增大 MA 周期导致 Sharpe 下降，建议回退到 v2。"
+  Agent: "Increasing MA period (10/30→20/50) decreased Sharpe from 1.5 to 1.1.
+          Recommend reverting to v2's MA 10/30."
 ```
 
-没有 exmem 时，v1-v3 的参数和结果已被 compaction 压缩成"测试了多组参数"，Agent 无法回答这个问题。
-
-## Context 文件结构
+## Context File Structure
 
 ```
 .exmem/
 └── context/
-    ├── _index.md            ← 全局概览（= compaction summary）
-    └── <topic>.md           ← LLM 按需创建的领域文件
+    ├── _index.md            ← overview (= compaction summary)
+    └── <topic>.md           ← LLM creates as needed
 ```
 
-只有 `_index.md` 是系统必需的。其他文件由 LLM 根据对话内容自行创建。
-不预设固定文件结构——文件按实际内容自然涌现。
+Only `_index.md` is required by the system. Other files are created by the LLM based on conversation content. No fixed file structure is imposed — files emerge naturally from the content.
 
-## 配置
+## Configuration
 
-开箱即用，无需配置。以下参数可在代码中调整：
+Works out of the box. These parameters can be adjusted in code:
 
-| 参数 | 默认值 | 说明 |
-|------|-------|------|
-| `tokenBudget` | 8000 | Context 文件总大小上限 (tokens) |
-| `segmentThreshold` | 40000 | 对话超过此长度时分段处理 (tokens) |
-| `repoPath` | `.exmem` | git 仓库路径 |
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `tokenBudget` | 8000 | Total token limit for all context files |
+| `segmentThreshold` | 40000 | Conversation length that triggers segmented processing |
+| `repoPath` | `.exmem` | Path to the Git repository |
 
-## 设计文档
+## Design
 
-- [DESIGN.md](DESIGN.md) — 完整系统设计
-- [DECISIONS.md](DECISIONS.md) — 12 个设计决策及 trade-off 记录
+exmem's design went through 10 rounds of iteration, from 50 design elements down to 19, informed by research from MemGPT, Generative Agents, Complementary Learning Systems theory, and the BDI cognitive architecture.
+
+- [DESIGN.md](DESIGN.md) — Full system design (Chinese)
+- [DECISIONS.md](DECISIONS.md) — 12 design decisions with trade-offs (Chinese)
+- [archive/](archive/) — Complete design evolution across all iterations
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-MIT
+[MIT](LICENSE)
