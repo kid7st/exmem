@@ -1,4 +1,6 @@
-# exmem: LLM Agent 的外部认知记忆系统
+# exmem: External Memory for LLM Agents
+
+LLM Agent 的外部认知记忆系统。
 
 ## 1. 问题
 
