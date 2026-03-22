@@ -1,381 +1,235 @@
-# 设计决策记录
+# Design Decisions
 
-本文档记录 exmem 设计过程中的关键决策、考虑过的替代方案、
-以及最终选择的理由。按决策时间排序。
-
----
-
-## D1: Git vs 其他存储后端
-
-**决策**: 使用 Git 作为 Context 的版本控制后端。
-
-**考虑过的替代方案**:
-
-| 方案 | 优点 | 缺点 |
-|------|------|------|
-| **Git** ✅ | 版本历史、per-file diff、grep、branch；零额外依赖 | grep 非语义化 |
-| SQLite + FTS5 | 更快的全文搜索 | 无版本历史、无 diff、额外依赖 |
-| Vector DB | 语义搜索 | 需要 embedding 模型；丧失精确检索 |
-| Pi custom entry | 无额外存储 | 无 diff、无 per-file history |
-| 纯文件夹 | 最简单 | 无版本历史、无回滚 |
-
-**决定理由**: Git 是唯一同时提供版本历史、per-file diff、全文搜索、
-和分支能力的方案。且所有开发机器都已安装，零额外依赖。
-
-**Trade-off**: 牺牲了语义搜索能力。关键词搜索（git grep）在编程场景下
-通常足够（参数名、函数名、术语都是精确的），
-但对模糊查询（"之前那个效果好的方案"）会失效。
+Trade-offs and rationale behind exmem's design.
+Grouped by theme, ordered chronologically within each group.
 
 ---
 
-## D2: 存什么 — Context 文件 vs 原始对话
+## Foundational Choices
 
-**决策**: Git 仓库中只存 Context 文件（精炼的心智模型），
-不存原始对话（那是 Pi JSONL 的职责）。
+### D1: Git as storage backend
 
-**关键认知跃迁**: 最初的设计（v1）试图用 git 存储原始对话
-（conversation.md + messages.json + summary.md + metadata.json）。
-审查后认识到这是冗余的——Pi JSONL 已经存了。
+**Decision**: Use Git for context version control.
 
-**真正需要存储的是**: 从对话中提炼出的结构化理解（Context），
-这是 Pi JSONL 中没有的。
+| Option | Pros | Cons |
+|--------|------|------|
+| **Git** ✅ | Version history, per-file diff, grep, branch; zero dependencies | No semantic search |
+| SQLite + FTS5 | Fast full-text search | No versioning, no diff |
+| Vector DB | Semantic search | Needs embedding model; loses exact retrieval |
+| Plain folder | Simplest | No versioning, no rollback |
 
-**Trade-off**: 牺牲了从 exmem 直接获取原始对话的能力。
-如果 Agent 需要原始对话细节，需要回到 Pi JSONL
-（通过 `ctx.sessionManager.getEntries()`）。
-这极少发生——Context 文件中的精炼信息通常足够。
+**Trade-off**: No semantic search. Keyword search (git grep) is sufficient
+for coding scenarios (precise terms), but fails for vague queries
+("that approach that worked better").
 
----
+### D2: Store context, not conversation
 
-## D3: 文件结构 — 预设 vs 自由
+**Decision**: Git stores curated Context files (the agent's mental model),
+not raw conversation (Pi JSONL handles that).
 
-**决策**: 只预设 `_index.md`，其他文件由 LLM 根据内容自行创建。
+**Key insight**: Conversation is process, Context is product.
+Storing raw conversation in git is redundant with Pi's JSONL.
+What's missing is the structured understanding extracted FROM conversation.
 
-**考虑过的方案**:
+**Trade-off**: Can't retrieve raw conversation from exmem.
+Agent must use Pi's `ctx.sessionManager.getEntries()` for that.
+Rarely needed — Context files contain the essential information.
 
-| 方案 | 优点 | 缺点 |
-|------|------|------|
-| BDI 目录 (beliefs/desires/intentions/) | 认知科学理论支撑 | 分类歧义、路径冗长 |
-| 7 个标准文件 (goals, constraints, ...) | 结构清晰 | 预设了答案；很多文件可能空着 |
-| **只有 _index.md** ✅ | 最灵活；文件按内容自然涌现 | 首次质量依赖 LLM 判断 |
+### D3: No prescribed file structure
 
-**决定理由**: 不同项目需要不同的 Context 结构。
-量化项目需要 `strategy-params.md`，web 项目需要 `api-design.md`。
-预设文件等于预设了问题的答案。
+**Decision**: Only `_index.md` is required. Other files created by LLM as needed.
 
-**Trade-off**: 首次固化时 LLM 需要从零决定文件结构，
-可能创建出不好的组织方式。通过首次格式示范缓解（见 D12）。
+| Option | Pros | Cons |
+|--------|------|------|
+| BDI directories (beliefs/desires/intentions/) | Theoretical backing | Classification ambiguity, long paths |
+| 7 standard files (goals, constraints, ...) | Clear structure | Preset answers; many files may be empty |
+| **Only _index.md** ✅ | Most flexible; files emerge from content | First consolidation quality depends on LLM |
 
----
+**Trade-off**: LLM must decide file organization from scratch on first
+consolidation. Mitigated by format demo (D7).
 
-## D4: 工具数量 — 7 个 vs 1 个
+### D4: One custom tool
 
-**决策**: 只注册 1 个自定义工具（ctx_update）。
-读取操作通过 bash + 标准 git 命令完成。
+**Decision**: Register only `ctx_update`. Reading via bash + standard git commands.
 
-**演化过程**: 7 (初始) → 5 (合并写入工具) → 1 (去掉所有读取工具)
+**Evolution**: 7 tools → 5 → 1.
 
-**关键论点**: Agent 是编程助手，它本来就会用 git。
-`bash("cd .exmem && git show abc123:context/file.md")`
-等价于 `mem_recall("abc123", "file.md")`，
-但前者不需要额外工具，后者需要注册工具、占 system prompt tokens、
-增加 LLM 选择负担。
+The agent is a coding assistant — it already knows git.
+`bash("cd .exmem && git show abc123:context/file.md")` doesn't need a wrapper.
 
-ctx_update 是唯一需要保留的工具，因为它提供了
-write + git add + git commit + 幂等检查 的原子性——
-这用 write + bash 分两步做会脆弱。
+`ctx_update` is the exception: it provides atomic write + git commit + idempotency
+that would be fragile with separate write + bash calls.
 
-**Trade-off**: Agent 需要知道 git 命令（通过 system prompt 教）。
-这对编程 Agent 来说不是问题。
-但对非编程 Agent（如果 exmem 被移植到其他场景），
-可能需要恢复自定义读取工具。
+**Trade-off**: Agent needs git command knowledge (taught via system prompt).
+Fine for coding agents. Non-coding agents may need read tools restored.
 
 ---
 
-## D5: 更新时机 — 实时 vs 批量
+## Mechanism Design
 
-**决策**: 两阶段更新。实时编码（ctx_update）+ 批量固化（compaction hook）。
+### D5: Two-phase update
 
-**理论依据**: 认知科学的编码特异性原理（Tulving, 1973）——
-在信息产生的当下捕获，比事后回忆提取可靠得多。
+**Decision**: Real-time encoding (ctx_update) + batch consolidation (compaction hook).
 
-**实际考量**: MemGPT (Packer et al., 2023) 验证了
-LLM 通过工具管理自己记忆的可行性。
-但 Agent 不总是可靠地调用 ctx_update。
-compaction hook 是安全网——即使 Agent 从不调用 ctx_update，
-compaction 时仍然会通过 LLM 从对话中提取信息。
+**Basis**: Encoding specificity (Tulving, 1973) — capturing information at the
+moment it's produced is more reliable than retrospective extraction.
 
-**Trade-off**: 实时编码依赖 Agent 的主动性（不可靠）。
-降级模式（只有 compaction 固化）仍然优于 Pi 默认 compaction
-（因为增量更新 vs 从头生成），但不如两阶段结合的效果。
+**Trade-off**: Real-time encoding depends on agent initiative (unreliable).
+Degraded mode (consolidation only) is still better than Pi's default compaction
+(incremental update vs regeneration from scratch).
 
----
+### D6: _index.md dual role
 
-## D6: _index.md 作为 Compaction Summary
+**Decision**: `_index.md` serves as both Pi's compaction summary
+AND the data source for Working Memory Brief (WMB) generation.
 
-**决策**: `_index.md` 的内容直接作为 Pi 的 compaction summary 返回。
+| Option | Pros | Cons |
+|--------|------|------|
+| Concatenate all context files | Agent sees all detail | Up to 8k tokens — too large for summary |
+| Separate summary generation | More refined | Extra LLM call |
+| **_index.md for both** ✅ | Zero overhead; naturally compatible | Narrative quality must serve both purposes |
 
-**考虑过的方案**:
+Good compaction summary = good WMB source. Narrative's first sentences
+naturally state goal + status, which is exactly what WMB needs.
 
-| 方案 | 优点 | 缺点 |
-|------|------|------|
-| 拼接所有 context 文件 | Agent 直接看到所有细节 | 可能 8k tokens，summary 太大 |
-| 独立生成 summary | 可以更精炼 | 额外 LLM 调用 |
-| **_index.md** ✅ | 自然的压缩视图；零额外开销 | 需要 LLM 维护好 Narrative |
+**Trade-off**: Agent only sees ~500-1000 tokens (_index.md) directly after
+compaction. Must actively `read` other files for detail. WMB mitigates this
+by continuously surfacing key facts during conversation.
 
-**Trade-off**: Agent 在 compaction 后只直接看到 _index.md 的内容
-（~500-1000 tokens），不直接看到其他 context 文件。
-需要主动 `read` 或 `bash git show` 来获取细节。
-但 _index.md 的 Narrative + Files 列表给了足够的线索
-让 Agent 知道"哪里有更多信息"。
+### D7: Safety mechanisms — simple + high-value only
 
----
+**Decision**: Snapshot + rollback + post-validation + [pinned] verification.
 
-## D7: 安全机制的选择
+**Kept**:
 
-**决策**: 采用 快照+回滚+后置验证 的组合，而非更复杂的方案。
+| Mechanism | Cost | Value |
+|-----------|------|-------|
+| [pinned] + code verification | Few lines of string matching | Prevents critical info loss |
+| Pre-consolidation snapshot | 2 git commands | Enables rollback on bad output |
+| Post-validation (5 checks) | ~15 lines | Catches obvious failures |
+| Format demo (first time) | ~500 tokens, first time only | Improves first consolidation |
+| ctx_update idempotency | 3 lines | Clean git history |
 
-**考虑过但砍掉的方案**:
+**Cut**: Periodic integrity checks (no action owner), Hot/Warm/Cold tiers
++ metadata.json (budget + prompt suffices), EXPAND/REVISE/CONTRACT
+classification (LLM does this naturally), multiple annotation formats
+(only [pinned] kept).
 
-| 砍掉的方案 | 砍掉的理由 |
-|-----------|-----------|
-| 周期性完整性校验 (每 5 次 compaction) | 产生警告但没有行动方处理 |
-| Hot/Warm/Cold 三层 + metadata.json | 大小预算 + 一句 prompt 就能控制增长 |
-| EXPAND/REVISE/CONTRACT 分类 | 增加 prompt 复杂度，LLM 直接更新更自然 |
-| 4 种注解格式 | 只保留 [pinned]，其余靠 git 历史 |
-| 两阶段 LLM 调用 (先提取再更新) | 单次调用 + chain-of-thought 足够 |
-
-**保留的方案**:
-
-| 保留的方案 | 保留的理由 |
-|-----------|-----------|
-| [pinned] + 代码验证 | 成本极低（几行字符串匹配），防护关键信息丢失 |
-| 固化前快照 + 回滚 | 成本极低（2 行 git 命令），防护 LLM 写垃圾 |
-| 后置验证 (5 项) | 成本极低（~15 行代码），捕获明显失败 |
-| 首次格式示范 | 仅首次使用（~500 tokens），显著提升首次输出质量 |
-| ctx_update 幂等 | 3 行代码，保持 git 历史干净 |
-
-**选择原则**: 只保留"几行代码就能实现，但防护价值高"的机制。
-复杂机制（需要额外状态追踪、额外 LLM 调用、或没有行动方）全部砍掉。
+**Principle**: Keep only mechanisms that take a few lines of code
+but protect against real failure modes.
 
 ---
 
-## D8: 自动回忆的定位
+## Design Principles (from lessons learned)
 
-**决策**: 延后到 Phase 2，从最简单方案开始。
+### D8: Don't over-engineer, don't over-theorize
 
-**理论背景**: 认知科学的前瞻记忆（预期性检索）——
-不等 Agent 主动搜索，系统预先提供相关信息。
-这比 Agent 主动搜索更可靠（Agent 的元认知不可靠）。
+**Background**: Design went through 50 → 12 → 19 elements.
 
-**为什么延后**: 自动回忆需要解决检索质量问题（精确率 vs 召回率），
-这是一个经验问题，需要在实际运行中调优。
-过度预设计一个未验证的算法是浪费。
+**Lessons**:
 
-**Phase 2 的起点**: 最简单的关键词匹配——
-从用户 prompt 提取名词 → 搜索 git commit messages → 注入匹配的 context。
-如果不够好，再加向量检索等复杂方案。
+1. **Don't teach LLMs what they already know.**
+   Topic switching rules, EXPAND/REVISE/CONTRACT classification —
+   LLMs understand these concepts natively. Excessive rules interfere.
 
-**Trade-off**: Phase 1 中 Agent 需要主动搜索记忆。
-如果 Agent 忘了搜索，历史信息不会自动出现。
-_index.md 中的 Narrative 和 Files 列表部分缓解了这个问题。
+2. **Don't design theoretical solutions for empirical problems.**
+   Information decay and consolidation quality can only be validated
+   through actual use. Pre-designing periodic integrity checks is waste.
 
----
+3. **No mechanism without an action owner.**
+   If nothing handles a warning, don't generate it.
 
-## D9: 过度设计的教训
+4. **Existing tools are the best tools.**
+   Agent has bash. Git has a mature CLI. Wrapping them usually
+   adds complexity without adding value.
 
-**背景**: 设计过程经历了 50 → 12 → 18 个设计元素的演化。
-50 的阶段包含了大量"理论上有道理但实际增加复杂度"的机制。
+5. **Cognitive science provides thinking frameworks, not engineering specs.**
+   BDI, Ebbinghaus curves, and ACT-R informed our understanding
+   but shouldn't be directly implemented as file structures or metadata.
+   Engineering needs simplicity, not theoretical fidelity.
 
-**教训**:
-
-1. **不要教 LLM 做它已经会的事**。
-   焦点切换的 4 级规则、信息分类为 EXPAND/REVISE/CONTRACT——
-   LLM 天生理解这些概念，给它过多的规则反而干扰自然行为。
-
-2. **不要为经验问题设计理论方案**。
-   信息衰减、LLM 固化质量这些问题只能通过实际运行来验证。
-   过度预设计（如周期性完整性校验）是浪费，
-   因为你不知道问题会以什么形式出现。
-
-3. **如果一个机制没有行动方，就不需要这个机制**。
-   警告/指标/校验的结果必须有人（或代码）会处理。
-   否则就是噪音。
-
-4. **已有的工具是最好的工具**。
-   Agent 有 bash，git 是成熟的 CLI 工具。
-   在它们之上包一层 custom tool 通常不会更好，只会更多。
+6. **Domain-specific examples anchor LLMs.**
+   Format demos should show FORMAT, not CONTENT patterns.
+   Use placeholders to avoid biasing toward specific domains.
 
 ---
 
-## D10: 认知科学的实际应用边界
+## Attention Management (v11-v12)
 
-**背景**: 设计中参考了大量认知科学研究（MemGPT, Generative Agents,
-Complementary Learning Systems, Ebbinghaus, BDI, 等等）。
+### D9: Three-layer architecture
 
-**实际应用了的**:
-- 两阶段更新（编码 + 固化）← Complementary Learning Systems
-- 编码信号词清单 ← Generative Agents (importance scoring 的简化版)
-- [pinned] ← Truth Maintenance Systems
+**Decision**: System organized as Organization (L1) → Retrieval (L2) → Attention (L3).
 
-**没有直接应用的**:
-- Ebbinghaus 遗忘曲线（用简单的大小预算替代）
-- BDI 目录结构（扁平化了）
-- MAX_HOT_TOPICS=4（Cowan 2001 的工作记忆容量，不直接适用于文件系统）
-- RAPTOR 的递归聚类（规模太小不需要）
-- 向量检索（关键词搜索在编程场景下够用）
+**Finding**: Most agent memory systems solve L1-L2 but fail at L3.
+Memory-Probe (ICLR 2026) showed the bottleneck is utilization, not retrieval.
 
-**教训**: 认知科学提供了有价值的**思维框架**
-（理解问题的本质、指导设计方向），
-但不应该直接搬运其机制到工程实现中。
-工程需要的是简单、可靠、可维护的方案，
-不是对理论的忠实复现。
+**Impact**: Phase 3 redefined from "extensions" to "attention management."
 
----
+### D10: Working Memory Brief (WMB)
 
-## D11: BDI 认知框架的应用方式
+**Decision**: Full Narrative (no truncation) + [pinned] scan + file list.
+Pure code generation. Injected at message list end.
 
-**决策**: BDI (Belief-Desire-Intention) 作为思维框架指导 prompt 设计，
-但不实现为文件结构或预设文件。
+| Option | Reliability | Complexity | Chosen? |
+|--------|------------|------------|---------|
+| A: Add structured Status fields to _index.md | Highest | Medium | ❌ Over-structures |
+| B: NLP extraction of goal/status | Medium | Medium | ❌ May extract wrong info |
+| **C: Use full Narrative as-is** | **High** | **Lowest** | ✅ |
 
-**考虑过的方案**:
+**Rationale**:
+- No truncation — 300 extra tokens in 1M context is 0.03%
+- Cannot produce wrong info (displays text as-is)
+- [pinned] extraction is 100% reliable (regex)
+- File list is 100% reliable (readdir)
 
-| 方案 | 优点 | 缺点 |
-|------|------|------|
-| BDI 目录 (beliefs/, desires/, intentions/) | 理论完备 | 分类歧义、路径冗长 |
-| 预设 goals.md | 保证目标被追踪 | 非目标驱动任务时空文件；预设了没有边界（为什么不也预设 constraints.md?） |
-| **框架在 prompt 中，不在文件中** ✅ | 灵活；LLM 自然适配不同任务类型 | 首次文件结构取决于 LLM 判断 |
+**Position**: End of message list (recency bias).
+Combined with auto-recall at front (primacy bias),
+covers both high-attention zones of the U-shaped attention curve.
 
-**决定理由**:
+**Frequency**: Inject when conversation > 20 messages OR context changed.
 
-1. BDI 是为有内部认知状态的自主 Agent 设计的。
-   LLM Agent 没有内部状态——它的全部"认知"来自 context 中的文本。
-   硬套 BDI 到文件结构上是把哲学框架当工程规范。
+### D11: Problem shift — storage → attention
 
-2. 如果"目标太重要必须预设 goals.md"，
-   那约束、决策同样重要——回到 7 个预设文件的滑坡。
+**Decision**: Reposition from "External memory" to "Structured working memory."
 
-3. 真正的问题不是"Agent 的信念和欲望是什么"，
-   而是"compaction 后需要什么信息才能继续工作"。
-   答案因任务而异，不能用固定框架预设。
+**Context**: Context windows grew from 200K to 1M+.
+Compaction triggers less often, but attention dilution becomes dominant.
 
-**实际体现**:
-- 固化 prompt 规则 1 补充了优先保留的信息类型
-  （目标、验证结果、约束、失败原因）
-- Few-shot 示例展示了 goal tracking 的模式
-  （LLM 看到后自然学会，但不强制）
-- 目标驱动任务 → LLM 自然创建 goals.md
-- 探索性任务 → LLM 不会被迫创建空的 goals.md
+**Evidence**:
+- Lost in the Middle: 30% accuracy drop at middle positions
+- Memory-Probe: Utilization bottleneck > retrieval bottleneck
+- Letta: Keeps core context at 8-16K even with 1M available
+- Cursor/Cline: Focused few > unfocused many
+
+**Both problems coexist**: Compaction (L1 + consolidation hook) still matters.
+Attention (L3 + WMB + context hook) becomes primary concern.
 
 ---
 
-## D12: Few-shot 示例的领域锚定风险
-
-**决策**: 首次固化使用**纯格式示范**（占位内容），不使用领域具体的示例。
-
-**问题**: 如果示例是量化策略场景（goals.md + backtest-results.md），
-LLM 在处理 web 开发、bug 修复等完全不同的任务时，
-会被锚定到示例的内容模式——模仿创建 goals.md、使用 v1/v2/v3 命名、
-硬套 Target/Status 结构，即使这些不适合当前任务。
-
-Few-shot 示例同时教了 FORMAT（需要）和 CONTENT PATTERN（不需要）。
-
-**解决**: 用占位符 `<根据实际内容命名>.md` 替代具体文件名，
-用 `<从对话中提取的关键信息>` 替代具体内容。
-附加"格式要点"列表说明规则。
-
-LLM 学会的是"怎么输出"，而不是"输出什么"。
-
----
-
-## D13: 三层架构模型
-
-**决策**: 将系统分为三层：Organization (L1) → Retrieval (L2) → Attention (L3)。
-
-**来源**: 综合 31 篇研究后的 SYNTHESIS.md 分析。
-
-**发现**: 大多数 Agent 记忆系统只解决了 L1-L2，
-在 L3 (让 LLM 实际利用检索到的信息) 上失败。
-Memory-Probe (ICLR 2026) 明确证实瓶颈在利用而非检索。
-
-**影响**: Phase 3 从"扩展功能"重定义为"注意力管理"。
-
----
-
-## D14: Working Memory Brief (WMB) 设计
-
-**决策**: 使用完整 Narrative（不截取）+ [pinned] 扫描 + 文件列表，
-纯代码生成，注入到消息列表末尾。
-
-**考虑过的方案**:
-
-| 方案 | 可靠性 | 复杂度 | 选择？ |
-|------|--------|--------|--------|
-| A: 给 _index.md 加 Status 结构字段 | 最高 | 中 | ❌ 违反 D9 |
-| B: NLP 语义提取 goal/status | 中 | 中 | ❌ 可能提取错误 |
-| **C: 直接使用完整 Narrative** | **高** | **最低** | ✅ |
-
-**Path C 理由**:
-- Narrative 不截取——1M context 中多 300 tokens 是 0.03%
-- 不截取 = 不需要 sentence splitting 代码 = 更简单
-- 不可能提取出"错误"信息（原样展示）
-- [pinned] 提取 100% 可靠（regex）
-- 文件列表 100% 可靠（readdir）
-
-**注入位置**: 消息列表末尾。利用 Lost in the Middle 的 recency bias，
-与 auto-recall 的 primacy zone 形成 U 型注意力曲线两端覆盖。
-
-**频率控制**: 对话 >20 消息 OR context 有变化时注入。
-
----
-
-## D15: 问题重心迁移 — 存储 → 注意力
-
-**决策**: 项目定位从 "External memory" 迁移到 "Structured working memory"。
-
-**背景**: Context window 从 200K 扩展到 1M+。
-Compaction 触发变少，但注意力稀释成为主要问题。
-
-**证据**:
-- Lost in the Middle: 中间位置信息利用率低 30%
-- Memory-Probe: 利用瓶颈 > 检索瓶颈
-- Letta: 即使 1M context 仍保持 8-16K 核心 context
-- Cursor/Cline: 精确少量 > 海量模糊
-
-**两个问题并存**:
-- Compaction 场景仍需要（L1 + compaction hook）
-- 注意力场景成为主要问题（L3 + WMB + context hook）
-
-**不是替换，是增加重心。**
-
----
-
-## 设计演化时间线
+## Evolution Timeline
 
 ```
-v1   初始设计: git 存储原始对话 (4文件结构 + 7工具)
-      ↓ "JSONL 已经存了对话"
-v2   修正: git 存储 Context 文档 (单文件 CONTEXT.md)
-      ↓ "Context 不是单一文档，是多 facet"
-v3   多文件: 按领域组织 + per-file 版本控制
-      ↓ "焦点切换怎么办？"
-v4   状态管理: Active/Paused 标注 + 冷热分层
-      ↓ "应该实时编码，不只是 compaction 时"
-v5   认知框架: 两阶段更新 + 认知科学基础
-      ↓ "前沿研究验证 + 补充"
-v6   研究整合: Reflexion, Mem0, CoALA 的启示
-      ↓ "是不是过度设计了？"
-v7   精简: 50 → 12 个元素
-      ↓ "有没有砍过头？"
-v8   回填: 12 → 18 个元素 (加回高价值安全机制)
-      ↓ "最终验证"
-v9   定稿: 19 个元素 (加分段处理)
-      ↓ "领域具体的示例会锚定 LLM"
-v10  格式示范: 用占位符替代领域示例，避免锚定效应
-      ↓ "context window 扩大到 1M, 注意力稀释成为新问题"
-v11  三层模型: Organization → Retrieval → Attention
-      ↓ "31 篇研究综合, Memory-Probe 证实利用瓶颈"
-v12  WMB: Working Memory Brief, 纯代码, 注入消息末尾 (recency bias)
+v1   git stores raw conversation (4 files + 7 tools)
+      ↓ "JSONL already stores conversation"
+v2   git stores Context document (single CONTEXT.md)
+      ↓ "Context is multi-facet, not single doc"
+v3   multi-file: per-topic + per-file versioning
+      ↓ "how to handle focus switching?"
+v4   status management: Active/Paused + tiering
+      ↓ "real-time encoding, not just compaction-time"
+v5   cognitive framework: two-phase update
+      ↓ "validate against research"
+v6   research integration: Reflexion, Mem0, CoALA
+      ↓ "is this over-engineered?"
+v7   simplification: 50 → 12 elements
+      ↓ "cut too much?"
+v8   restore: 12 → 19 (add back high-value safety)
+      ↓ "domain examples anchor LLMs"
+v9   format demo: placeholders, no domain content
+      ↓ "1M context → attention dilution is the new problem"
+v10  three-layer model: Organization → Retrieval → Attention
+      ↓ "31 papers confirm utilization bottleneck"
+v11  WMB: Working Memory Brief, pure code, recency bias injection
 
-完整的演化过程保留在 archive/ 目录中。
+Full evolution in archive/
 ```
