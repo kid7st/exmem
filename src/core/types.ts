@@ -102,6 +102,44 @@ export interface ValidationResult {
 }
 
 // ---------------------------------------------------------------------------
+// Auto-recall (Phase 2)
+// ---------------------------------------------------------------------------
+
+export interface LogEntry {
+  hash: string;
+  message: string;
+  timestamp: string;
+}
+
+export interface SearchHit {
+  /** Commit that matched */
+  entry: LogEntry;
+
+  /** Lines that matched the query */
+  matchedLines: string[];
+
+  /** Relevance score: keyword matches × recency weight */
+  score: number;
+}
+
+export interface AutoRecallConfig {
+  /** Max tokens to inject into context (default 2000) */
+  maxInjectTokens: number;
+
+  /** Minimum score threshold to inject (default 1.0) */
+  scoreThreshold: number;
+
+  /** Minimum conversation turns since last compaction before triggering (default 3) */
+  minTurnsSinceCompaction: number;
+}
+
+export const DEFAULT_RECALL_CONFIG: AutoRecallConfig = {
+  maxInjectTokens: 2000,
+  scoreThreshold: 1.0,
+  minTurnsSinceCompaction: 3,
+};
+
+// ---------------------------------------------------------------------------
 // Git operation results
 // ---------------------------------------------------------------------------
 

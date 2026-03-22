@@ -11,6 +11,7 @@ import {
   parseConsolidationOutput,
   FORMAT_DEMO,
 } from "./prompts.ts";
+import { autoRecall } from "./auto-recall.ts";
 
 // ---------------------------------------------------------------------------
 // session_start (DESIGN §8)
@@ -27,12 +28,27 @@ export async function onSessionStart(exMem: ExMem): Promise<void> {
 export async function onBeforeAgentStart(
   exMem: ExMem,
   event: { prompt: string; systemPrompt: string },
-): Promise<{ systemPrompt: string }> {
+): Promise<{
+  systemPrompt: string;
+  recallContent?: string;
+}> {
   const status = await exMem.getStatus();
   const memorySection = buildSystemPrompt(status.checkpoints, status.files);
 
+  // Phase 2: auto-recall — search for relevant historical context
+  let recallContent: string | undefined;
+  try {
+    const recalled = await autoRecall(exMem, event.prompt);
+    if (recalled) {
+      recallContent = recalled;
+    }
+  } catch {
+    // Non-critical: auto-recall failure shouldn't block the agent
+  }
+
   return {
     systemPrompt: event.systemPrompt + "\n\n" + memorySection,
+    recallContent,
   };
 }
 

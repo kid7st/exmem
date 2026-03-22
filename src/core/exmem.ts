@@ -15,6 +15,8 @@ import type {
   ContextSnapshot,
   ConsolidationOutput,
   ValidationResult,
+  LogEntry,
+  SearchHit,
 } from "./types.ts";
 import { DEFAULT_CONFIG } from "./types.ts";
 import { GitOps, ExMemError } from "./git-ops.ts";
@@ -157,7 +159,7 @@ export class ExMem {
     }
   }
 
-  // ── Query methods (used by auto-recall in Phase 2) ────────────
+  // ── Query methods ───────────────────────────────────────────
 
   /** Get the content of _index.md (the compaction summary). */
   async getIndexContent(): Promise<string | null> {
@@ -169,6 +171,147 @@ export class ExMem {
     const checkpoints = await this.git.commitCount();
     const files = await this.context.listFiles();
     return { checkpoints, files: files.length };
+  }
+
+  // ── Phase 2: log & search (for auto-recall) ───────────────────
+
+  /**
+   * Get commit log entries.
+   * Filters to [context] commits only (excludes [snapshot], [init]).
+   */
+  async log(limit = 50): Promise<LogEntry[]> {
+    const SEP = "---EXMEM---";
+    const raw = await this.git.log([
+      `--format=%h${SEP}%s${SEP}%aI`,
+      `-${limit}`,
+      "--grep=\\[context\\]",
+    ]);
+
+    if (!raw.trim()) return [];
+
+    return raw
+      .trim()
+      .split("\n")
+      .map((line) => {
+        const [hash, message, timestamp] = line.split(SEP);
+        return { hash, message, timestamp };
+      })
+      .filter((e) => e.hash); // skip malformed lines
+  }
+
+  /**
+   * Search commit messages for a query string.
+   * Returns matching log entries with the matched commit message lines.
+   */
+  async searchCommitMessages(query: string): Promise<LogEntry[]> {
+    const raw = await this.git.log([
+      "--all",
+      "--oneline",
+      `--grep=${query}`,
+      "-i", // case-insensitive
+      "-20",
+    ]);
+
+    if (!raw.trim()) return [];
+
+    return raw
+      .trim()
+      .split("\n")
+      .map((line) => {
+        const spaceIdx = line.indexOf(" ");
+        return {
+          hash: line.substring(0, spaceIdx),
+          message: line.substring(spaceIdx + 1),
+          timestamp: "",
+        };
+      })
+      .filter((e) => e.hash);
+  }
+
+  /**
+   * Search context file content across all commits for a query.
+   * Uses git grep on the current HEAD (not all commits — for speed).
+   */
+  async searchContent(query: string): Promise<{ file: string; line: string }[]> {
+    try {
+      const raw = await this.git.grep(query);
+      if (!raw.trim()) return [];
+
+      return raw
+        .trim()
+        .split("\n")
+        .map((line) => {
+          // git grep output: <file>:<matched line>
+          const colonIdx = line.indexOf(":");
+          return {
+            file: line.substring(0, colonIdx),
+            line: line.substring(colonIdx + 1),
+          };
+        })
+        .filter((r) => r.file.startsWith(this.config.contextDir));
+    } catch {
+      return []; // git grep returns exit code 1 on no match
+    }
+  }
+
+  /**
+   * Search both commit messages and content. Returns scored results.
+   * Score = matchCount × recencyWeight
+   */
+  async search(keywords: string[]): Promise<SearchHit[]> {
+    const allEntries = await this.log(50);
+    const hitMap = new Map<string, SearchHit>();
+
+    for (const keyword of keywords) {
+      if (!keyword || keyword.length < 2) continue;
+
+      // Search commit messages
+      const msgHits = await this.searchCommitMessages(keyword);
+      for (const entry of msgHits) {
+        const existing = hitMap.get(entry.hash);
+        if (existing) {
+          existing.score += 1;
+          existing.matchedLines.push(`[commit] ${entry.message}`);
+        } else {
+          // Find recency: position in log (0 = most recent)
+          const idx = allEntries.findIndex((e) => e.hash === entry.hash);
+          const recency = idx >= 0 ? 1.0 / (1 + idx * 0.2) : 0.3;
+          hitMap.set(entry.hash, {
+            entry,
+            matchedLines: [`[commit] ${entry.message}`],
+            score: recency,
+          });
+        }
+      }
+
+      // Search content
+      const contentHits = await this.searchContent(keyword);
+      for (const hit of contentHits) {
+        // Find which commit last changed this file
+        const fileLog = await this.git.log([
+          "--oneline", "-1", "--", hit.file,
+        ]);
+        const hash = fileLog.split(" ")[0];
+        if (!hash) continue;
+
+        const existing = hitMap.get(hash);
+        if (existing) {
+          existing.score += 0.5;
+          existing.matchedLines.push(`[${hit.file}] ${hit.line.trim()}`);
+        } else {
+          const idx = allEntries.findIndex((e) => e.hash === hash);
+          const recency = idx >= 0 ? 1.0 / (1 + idx * 0.2) : 0.3;
+          hitMap.set(hash, {
+            entry: { hash, message: fileLog.substring(hash.length + 1), timestamp: "" },
+            matchedLines: [`[${hit.file}] ${hit.line.trim()}`],
+            score: recency * 0.5,
+          });
+        }
+      }
+    }
+
+    // Sort by score descending
+    return [...hitMap.values()].sort((a, b) => b.score - a.score);
   }
 
   // ── Internal ───────────────────────────────────────────────────

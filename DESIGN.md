@@ -538,12 +538,14 @@ exmem/
 - [x] 测试 — 15 tests (init, idempotency, checkpoint, validation, rollback, [pinned], XML parsing)
 - [x] 国际化 — 英文 README + 中文翻译, 英文源码/prompts, MIT License, CONTRIBUTING.md
 
-### Phase 2: 自动回忆
+### Phase 2: 自动回忆 ✅
 
-- [ ] before_agent_start 中搜索相关 Context 历史
-- [ ] ExMem 扩展 — log, search 方法 (供自动回忆内部调用)
-- [ ] 注入控制 (预算, 阈值, 精确率优先)
-- [ ] 从最简单方案开始，根据实际效果迭代
+- [x] ExMem 扩展 — log (filtered to [context] commits), searchCommitMessages, searchContent, search (combined with scoring)
+- [x] auto-recall.ts — extractKeywords (English + Chinese + quoted strings + numbers) + autoRecall (pure code, no LLM)
+- [x] before_agent_start hook — inject recalled context as hidden custom message (exmem-recall)
+- [x] 注入控制 — maxInjectTokens (2000), scoreThreshold (1.0), overlap detection, top-2 hits max
+- [x] 精确率优先 — 6 guard conditions (short prompt, no history, no keywords, low score, high overlap, budget)
+- [x] 测试 — 16 new tests (extractKeywords: 6, log: 2, search: 4, autoRecall: 4)
 
 ### Phase 3: 扩展
 

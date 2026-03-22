@@ -41,6 +41,19 @@ export default function exMemExtension(pi: ExtensionAPI) {
 
     try {
       const result = await onBeforeAgentStart(exMem, event);
+
+      // Phase 2: inject recalled context as a hidden message
+      if (result.recallContent) {
+        return {
+          systemPrompt: result.systemPrompt,
+          message: {
+            customType: "exmem-recall",
+            content: result.recallContent,
+            display: false, // hidden from TUI, visible to LLM
+          },
+        };
+      }
+
       return { systemPrompt: result.systemPrompt };
     } catch {
       // Non-critical: agent works without memory prompt
