@@ -1,5 +1,5 @@
 /**
- * git-mem Pi extension entry point.
+ * exmem Pi extension entry point.
  *
  * Registers:
  * - 1 tool: ctx_update
@@ -8,39 +8,39 @@
  * Design reference: DESIGN.md §3
  */
 
-import { GitMem } from "../core/git-mem.ts";
+import { ExMem } from "../core/exmem.ts";
 import { createCtxUpdateTool } from "./tools.ts";
 import { onSessionStart, onBeforeAgentStart, onBeforeCompact } from "./hooks.ts";
 
 // ExtensionAPI type — imported dynamically to avoid hard dependency
 type ExtensionAPI = any;
 
-export default function gitMemExtension(pi: ExtensionAPI) {
+export default function exMemExtension(pi: ExtensionAPI) {
   // Resolve repo path relative to cwd
   // Will be set on session_start when we have access to ctx.cwd
-  let gitMem: GitMem | null = null;
+  let exMem: ExMem | null = null;
   let initFailed = false;
 
-  // ── session_start: Initialize .git-mem/ (DESIGN §8) ─────────
+  // ── session_start: Initialize .exmem/ (DESIGN §8) ─────────
 
   pi.on("session_start", async (_event: any, ctx: any) => {
     try {
-      gitMem = new GitMem({ repoPath: `${ctx.cwd}/.git-mem` });
-      await onSessionStart(gitMem);
+      exMem = new ExMem({ repoPath: `${ctx.cwd}/.exmem` });
+      await onSessionStart(exMem);
     } catch (error) {
       initFailed = true;
       const msg = error instanceof Error ? error.message : String(error);
-      ctx.ui.notify(`git-mem init failed: ${msg}. Memory features disabled.`, "warning");
+      ctx.ui.notify(`exmem init failed: ${msg}. Memory features disabled.`, "warning");
     }
   });
 
   // ── before_agent_start: System prompt enhancement (DESIGN §6.3) ──
 
   pi.on("before_agent_start", async (event: any, _ctx: any) => {
-    if (!gitMem || initFailed) return;
+    if (!exMem || initFailed) return;
 
     try {
-      const result = await onBeforeAgentStart(gitMem, event);
+      const result = await onBeforeAgentStart(exMem, event);
       return { systemPrompt: result.systemPrompt };
     } catch {
       // Non-critical: agent works without memory prompt
@@ -50,7 +50,7 @@ export default function gitMemExtension(pi: ExtensionAPI) {
   // ── session_before_compact: Memory consolidation (DESIGN §5.2) ──
 
   pi.on("session_before_compact", async (event: any, ctx: any) => {
-    if (!gitMem || initFailed) return; // Fallback: Pi default compaction
+    if (!exMem || initFailed) return; // Fallback: Pi default compaction
 
     try {
       // Import Pi's serialization utility
@@ -83,7 +83,7 @@ export default function gitMemExtension(pi: ExtensionAPI) {
       // Import complete function for LLM call
       const { complete } = await import("@mariozechner/pi-ai");
 
-      const result = await onBeforeCompact(gitMem, {
+      const result = await onBeforeCompact(exMem, {
         conversation,
         tokensBefore,
         firstKeptEntryId,
@@ -122,15 +122,15 @@ export default function gitMemExtension(pi: ExtensionAPI) {
     } catch (error) {
       // Any error → fallback to Pi default compaction (DESIGN §7)
       const msg = error instanceof Error ? error.message : String(error);
-      ctx.ui.notify(`git-mem consolidation failed: ${msg}. Using default compaction.`, "warning");
+      ctx.ui.notify(`exmem consolidation failed: ${msg}. Using default compaction.`, "warning");
       return; // undefined = Pi proceeds with default
     }
   });
 
   // ── Register ctx_update tool (DESIGN §6.1) ─────────────────
 
-  // We need gitMem to be initialized, but registerTool happens at load time.
-  // Solution: register with a wrapper that checks gitMem at execution time.
+  // We need exMem to be initialized, but registerTool happens at load time.
+  // Solution: register with a wrapper that checks exMem at execution time.
   pi.registerTool({
     name: "ctx_update",
     label: "Context Update",
@@ -171,14 +171,14 @@ export default function gitMemExtension(pi: ExtensionAPI) {
       onUpdate: ((update: any) => void) | undefined,
       ctx: any,
     ) {
-      if (!gitMem || initFailed) {
-        throw new Error("git-mem not initialized. Context memory is not available.");
+      if (!exMem || initFailed) {
+        throw new Error("exmem not initialized. Context memory is not available.");
       }
 
       // Normalize: strip leading @ (some models add it)
       const file = params.file.replace(/^@/, "");
 
-      const hash = await gitMem.updateFile(file, params.content, params.message);
+      const hash = await exMem.updateFile(file, params.content, params.message);
 
       if (hash === null) {
         return {

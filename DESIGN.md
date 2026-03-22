@@ -1,4 +1,4 @@
-# git-mem: LLM Agent 的外部认知记忆系统
+# exmem: LLM Agent 的外部认知记忆系统
 
 ## 1. 问题
 
@@ -68,11 +68,11 @@ Git 的语义恰好匹配 Context 的操作需求：
 ├───────────────────────────────────────────────────────────┤
 │                   Pi Extension                              │
 │                                                            │
-│  session_start          → 初始化 .git-mem/                 │
+│  session_start          → 初始化 .exmem/                 │
 │  session_before_compact → 记忆固化 (核心)                   │
 │  before_agent_start     → system prompt 增强               │
 ├───────────────────────────────────────────────────────────┤
-│                   .git-mem/ (Git 仓库)                      │
+│                   .exmem/ (Git 仓库)                      │
 │                                                            │
 │  context/                                                  │
 │  ├── _index.md          ← 全局概览 (= compaction summary)  │
@@ -87,7 +87,7 @@ Git 的语义恰好匹配 Context 的操作需求：
 | 自定义工具 | 1 | `ctx_update`：写入 Context 文件 + git commit |
 | Extension hooks | 3 | `session_start`, `session_before_compact`, `before_agent_start` |
 | 必需文件 | 1 | `_index.md` |
-| 额外存储 | 1 | `.git-mem/` git 仓库 |
+| 额外存储 | 1 | `.exmem/` git 仓库 |
 | LLM 额外调用 | 0 | 替换 Pi 默认的 compaction 摘要生成，非新增 |
 
 ---
@@ -97,7 +97,7 @@ Git 的语义恰好匹配 Context 的操作需求：
 ### 4.1 仓库结构
 
 ```
-.git-mem/
+.exmem/
 ├── .git/
 └── context/
     ├── _index.md              ← 唯一必需文件
@@ -343,19 +343,19 @@ ctx_update(file="constraints.md", content="...", message="add MaxDD constraint")
 
 ```bash
 # 读取当前 context 文件
-read(".git-mem/context/strategy-params.md")
+read(".exmem/context/strategy-params.md")
 
 # 查看某个文件的版本历史
-bash("cd .git-mem && git log --oneline -- context/strategy-params.md")
+bash("cd .exmem && git log --oneline -- context/strategy-params.md")
 
 # 读取历史版本
-bash("cd .git-mem && git show ghi9012:context/strategy-params.md")
+bash("cd .exmem && git show ghi9012:context/strategy-params.md")
 
 # 搜索历史
-bash("cd .git-mem && git log --all --oneline --grep='Sharpe'")
+bash("cd .exmem && git log --all --oneline --grep='Sharpe'")
 
 # 对比两个版本
-bash("cd .git-mem && git diff ghi9012 abc1234 -- context/strategy-params.md")
+bash("cd .exmem && git diff ghi9012 abc1234 -- context/strategy-params.md")
 ```
 
 ### 6.3 System Prompt 增强
@@ -363,7 +363,7 @@ bash("cd .git-mem && git diff ghi9012 abc1234 -- context/strategy-params.md")
 ```markdown
 ## Context Memory
 
-你有一个外部记忆系统在 `.git-mem/` 目录下，用 Git 版本控制。
+你有一个外部记忆系统在 `.exmem/` 目录下，用 Git 版本控制。
 你的知识和理解被持久化在 context 文件中。
 
 **记录信息** — 遇到以下内容时，用 ctx_update 记录：
@@ -375,10 +375,10 @@ bash("cd .git-mem && git diff ghi9012 abc1234 -- context/strategy-params.md")
 关键约束标记为 [pinned]，如: `MaxDD ≤ 25% [pinned]`
 
 **查询历史** — 需要历史信息时，用 bash 执行 git 命令：
-  cd .git-mem && git log --oneline -- context/<file>    # 版本历史
-  cd .git-mem && git show <hash>:context/<file>         # 读取历史版本
-  cd .git-mem && git diff <hash1> <hash2> -- context/   # 对比变化
-  cd .git-mem && git log --all --oneline --grep='...'   # 搜索
+  cd .exmem && git log --oneline -- context/<file>    # 版本历史
+  cd .exmem && git show <hash>:context/<file>         # 读取历史版本
+  cd .exmem && git diff <hash1> <hash2> -- context/   # 对比变化
+  cd .exmem && git log --all --oneline --grep='...'   # 搜索
 
 **切换话题** — 标记旧话题为 ⏸️ Paused，不要删除内容。
 
@@ -406,11 +406,11 @@ bash("cd .git-mem && git diff ghi9012 abc1234 -- context/strategy-params.md")
 `session_start` hook 中执行：
 
 ```
-if .git-mem/ 不存在:
-    git init .git-mem/
-    mkdir .git-mem/context/
-    写入 .git-mem/context/_index.md (初始模板，见下)
-    git add -A && git commit -m "[init] initialize git-mem"
+if .exmem/ 不存在:
+    git init .exmem/
+    mkdir .exmem/context/
+    写入 .exmem/context/_index.md (初始模板，见下)
+    git add -A && git commit -m "[init] initialize exmem"
 
 读取当前状态:
     checkpointCount = git rev-list --count HEAD
@@ -448,22 +448,22 @@ compaction 时, 固化 hook 确保所有信息被整合到 context 文件中
 ─── 用户: "v2 的结果最好，回到 v2 参数" ───
 
 Agent:
-  bash("cd .git-mem && git log --oneline -- context/strategy-params.md")
+  bash("cd .exmem && git log --oneline -- context/strategy-params.md")
   → abc1234  v4: MA 20/50
     def5678  v3: MA 10/30 RSI 65
     ghi9012  v2: MA 10/30 RSI 70     ← 目标
     jkl3456  v1: MA 10/20
 
-  bash("cd .git-mem && git show ghi9012:context/strategy-params.md")
+  bash("cd .exmem && git show ghi9012:context/strategy-params.md")
   → 拿到 v2 完整参数
 
 ─── 用户: "帮我分析 MA 周期对 Sharpe 的影响" ───
 
 Agent:
-  bash("cd .git-mem && git diff ghi9012 abc1234 -- context/strategy-params.md")
+  bash("cd .exmem && git diff ghi9012 abc1234 -- context/strategy-params.md")
   → MA fast 10→20, slow 30→50
 
-  bash("cd .git-mem && git diff ghi9012 abc1234 -- context/backtest-results.md")
+  bash("cd .exmem && git diff ghi9012 abc1234 -- context/backtest-results.md")
   → Sharpe 1.5→1.1, MaxDD -15%→-22%
 
   Agent: "增大 MA 周期 (10/30→20/50) 导致 Sharpe 从 1.5 降到 1.1。
@@ -485,9 +485,9 @@ Agent:
 ─── 用户: "好，回到均线策略" ───
 
 Agent:
-  read(".git-mem/context/goals.md")
+  read(".exmem/context/goals.md")
   → 看到均线策略标记为 ⏸️，有 v2 最优参数的摘要
-  → 如需细节: bash("cd .git-mem && git log ...")
+  → 如需细节: bash("cd .exmem && git log ...")
 ```
 
 ---
@@ -495,7 +495,7 @@ Agent:
 ## 10. 模块结构
 
 ```
-git-mem/
+exmem/
 ├── package.json
 ├── tsconfig.json
 ├── DESIGN.md                       ← 本文档
@@ -507,7 +507,7 @@ git-mem/
 │   │   ├── types.ts                ← 类型定义
 │   │   ├── git-ops.ts              ← Git CLI 封装
 │   │   ├── context.ts              ← Context 文件读写 + 验证
-│   │   └── git-mem.ts              ← GitMem 主类 (init, checkpoint)
+│   │   └── exmem.ts              ← ExMem 主类 (init, checkpoint)
 │   ├── pi-extension/
 │   │   ├── index.ts                ← Extension 入口
 │   │   ├── hooks.ts                ← session_start / session_before_compact
@@ -526,9 +526,9 @@ git-mem/
 
 - [ ] GitOps — git CLI 封装 (init, add, commit, show, log, diff, grep)
 - [ ] Context — 文件读写 + _index.md 模板 + [pinned] 验证 + 大小检查
-- [ ] GitMem — 主类 (init, checkpoint)
+- [ ] ExMem — 主类 (init, checkpoint)
 - [ ] ctx_update 工具 — 幂等检查 + 写入 + 自动 commit message
-- [ ] session_start hook — 初始化 .git-mem/
+- [ ] session_start hook — 初始化 .exmem/
 - [ ] session_before_compact hook — 完整固化流程 (快照/固化/验证/回滚)
 - [ ] before_agent_start hook — system prompt 增强
 - [ ] prompts.ts — 固化 prompt + 首次格式示范
@@ -538,7 +538,7 @@ git-mem/
 ### Phase 2: 自动回忆
 
 - [ ] before_agent_start 中搜索相关 Context 历史
-- [ ] GitMem 扩展 — log, search 方法 (供自动回忆内部调用)
+- [ ] ExMem 扩展 — log, search 方法 (供自动回忆内部调用)
 - [ ] 注入控制 (预算, 阈值, 精确率优先)
 - [ ] 从最简单方案开始，根据实际效果迭代
 

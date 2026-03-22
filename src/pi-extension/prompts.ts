@@ -1,5 +1,5 @@
 /**
- * Prompts for git-mem consolidation and system prompt enhancement.
+ * Prompts for exmem consolidation and system prompt enhancement.
  *
  * Design reference: DESIGN.md §5.3, §5.4, §6.3
  */
@@ -13,7 +13,7 @@ import type { ContextSnapshot } from "../core/types.ts";
 export function buildSystemPrompt(checkpoints: number, fileCount: number): string {
   return `## Context Memory
 
-你有一个外部记忆系统在 \`.git-mem/\` 目录下，用 Git 版本控制。
+你有一个外部记忆系统在 \`.exmem/\` 目录下，用 Git 版本控制。
 你的知识和理解被持久化在 context 文件中。
 
 **记录信息** — 遇到以下内容时，用 ctx_update 记录：
@@ -25,10 +25,10 @@ export function buildSystemPrompt(checkpoints: number, fileCount: number): strin
 关键约束标记为 [pinned]，如: \`MaxDD ≤ 25% [pinned]\`
 
 **查询历史** — 需要历史信息时，用 bash 执行 git 命令：
-  cd .git-mem && git log --oneline -- context/<file>    # 版本历史
-  cd .git-mem && git show <hash>:context/<file>         # 读取历史版本
-  cd .git-mem && git diff <hash1> <hash2> -- context/   # 对比变化
-  cd .git-mem && git log --all --oneline --grep='...'   # 搜索
+  cd .exmem && git log --oneline -- context/<file>    # 版本历史
+  cd .exmem && git show <hash>:context/<file>         # 读取历史版本
+  cd .exmem && git diff <hash1> <hash2> -- context/   # 对比变化
+  cd .exmem && git log --all --oneline --grep='...'   # 搜索
 
 **切换话题** — 标记旧话题为 ⏸️ Paused，不要删除内容。
 

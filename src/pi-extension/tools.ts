@@ -1,21 +1,21 @@
 /**
  * ctx_update tool definition for Pi.
  *
- * The only custom tool registered by git-mem.
+ * The only custom tool registered by exmem.
  * Provides atomic write + git commit with idempotency.
  *
  * Design reference: DESIGN.md §5.1, §6.1
  */
 
-import type { GitMem } from "../core/git-mem.ts";
+import type { ExMem } from "../core/exmem.ts";
 
 /**
  * Create the ctx_update tool definition for Pi's registerTool().
  *
  * Usage in Pi extension:
- *   pi.registerTool(createCtxUpdateTool(gitMem));
+ *   pi.registerTool(createCtxUpdateTool(exMem));
  */
-export function createCtxUpdateTool(gitMem: GitMem) {
+export function createCtxUpdateTool(exMem: ExMem) {
   // Dynamic import of typebox to avoid hard dependency when pi is not available
   // The actual tool definition uses Type.Object etc. from @sinclair/typebox
   // which is available through pi-coding-agent
@@ -63,7 +63,7 @@ export function createCtxUpdateTool(gitMem: GitMem) {
         // Normalize: strip leading @ (some models add it)
         const file = params.file.replace(/^@/, "");
 
-        const hash = await gitMem.updateFile(file, params.content, params.message);
+        const hash = await exMem.updateFile(file, params.content, params.message);
 
         if (hash === null) {
           return {

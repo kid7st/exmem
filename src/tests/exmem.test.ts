@@ -3,24 +3,24 @@ import * as assert from "node:assert/strict";
 import { mkdtemp, rm, readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { GitMem } from "../core/git-mem.ts";
+import { ExMem } from "../core/exmem.ts";
 import { parseConsolidationOutput } from "../pi-extension/prompts.ts";
 import type { ConsolidationOutput } from "../core/types.ts";
 
-// Helper: create a GitMem instance in a temp directory
-async function createTestGitMem(): Promise<{ gitMem: GitMem; dir: string }> {
-  const dir = await mkdtemp(join(tmpdir(), "git-mem-test-"));
-  const gitMem = new GitMem({ repoPath: join(dir, ".git-mem") });
-  return { gitMem, dir };
+// Helper: create a ExMem instance in a temp directory
+async function createTestExMem(): Promise<{ exMem: ExMem; dir: string }> {
+  const dir = await mkdtemp(join(tmpdir(), "exmem-test-"));
+  const exMem = new ExMem({ repoPath: join(dir, ".exmem") });
+  return { exMem, dir };
 }
 
-describe("GitMem", () => {
-  let gitMem: GitMem;
+describe("ExMem", () => {
+  let exMem: ExMem;
   let testDir: string;
 
   before(async () => {
-    const t = await createTestGitMem();
-    gitMem = t.gitMem;
+    const t = await createTestExMem();
+    exMem = t.exMem;
     testDir = t.dir;
   });
 
@@ -31,24 +31,24 @@ describe("GitMem", () => {
   // ── Init (DESIGN §8) ──────────────────────────────────────
 
   describe("init", () => {
-    it("creates .git-mem repo with _index.md", async () => {
-      const created = await gitMem.init();
+    it("creates .exmem repo with _index.md", async () => {
+      const created = await exMem.init();
       assert.equal(created, true);
 
       // Verify _index.md exists
-      const index = await gitMem.getIndexContent();
+      const index = await exMem.getIndexContent();
       assert.ok(index);
       assert.ok(index.includes("Narrative"));
       assert.ok(index.includes("No context recorded yet"));
     });
 
     it("is idempotent", async () => {
-      const created = await gitMem.init();
+      const created = await exMem.init();
       assert.equal(created, false);
     });
 
     it("has initial commit", async () => {
-      const status = await gitMem.getStatus();
+      const status = await exMem.getStatus();
       assert.ok(status.checkpoints >= 1);
       assert.equal(status.files, 1); // only _index.md
     });
@@ -58,22 +58,22 @@ describe("GitMem", () => {
 
   describe("updateFile", () => {
     it("creates a new file and commits", async () => {
-      const hash = await gitMem.updateFile(
+      const hash = await exMem.updateFile(
         "strategy-params.md",
         "# Strategy\n- MA: 10/30\n- RSI: 70\n",
         "v1 params",
       );
       assert.ok(hash);
 
-      const content = await gitMem.context.readFile("strategy-params.md");
+      const content = await exMem.context.readFile("strategy-params.md");
       assert.ok(content?.includes("MA: 10/30"));
 
-      const status = await gitMem.getStatus();
+      const status = await exMem.getStatus();
       assert.equal(status.files, 2); // _index.md + strategy-params.md
     });
 
     it("is idempotent — same content returns null", async () => {
-      const hash = await gitMem.updateFile(
+      const hash = await exMem.updateFile(
         "strategy-params.md",
         "# Strategy\n- MA: 10/30\n- RSI: 70\n",
         "same content",
@@ -82,19 +82,19 @@ describe("GitMem", () => {
     });
 
     it("updates existing file", async () => {
-      const hash = await gitMem.updateFile(
+      const hash = await exMem.updateFile(
         "strategy-params.md",
         "# Strategy\n- MA: 10/30\n- RSI: 65\n",
         "v2 params",
       );
       assert.ok(hash);
 
-      const content = await gitMem.context.readFile("strategy-params.md");
+      const content = await exMem.context.readFile("strategy-params.md");
       assert.ok(content?.includes("RSI: 65"));
     });
 
     it("commit message includes diff stat", async () => {
-      const log = await gitMem.git.log(["--oneline", "-1"]);
+      const log = await exMem.git.log(["--oneline", "-1"]);
       assert.ok(log.includes("v2 params") || log.includes("[context]"));
     });
   });
@@ -123,19 +123,19 @@ describe("GitMem", () => {
         ]),
       };
 
-      const checkpoint = await gitMem.checkpoint(output);
+      const checkpoint = await exMem.checkpoint(output);
       assert.ok(checkpoint);
       assert.ok(checkpoint.hash);
       assert.ok(checkpoint.filesChanged.includes("_index.md"));
     });
 
     it("preserves [pinned] items", async () => {
-      const content = await gitMem.context.readFile("strategy-params.md");
+      const content = await exMem.context.readFile("strategy-params.md");
       assert.ok(content?.includes("[pinned]"));
     });
 
     it("rolls back on validation failure — missing _index.md", async () => {
-      const previousIndex = await gitMem.getIndexContent();
+      const previousIndex = await exMem.getIndexContent();
 
       const badOutput: ConsolidationOutput = {
         files: new Map([
@@ -143,11 +143,11 @@ describe("GitMem", () => {
         ]),
       };
 
-      const result = await gitMem.checkpoint(badOutput);
+      const result = await exMem.checkpoint(badOutput);
       assert.equal(result, null); // Should fail validation
 
       // Verify rollback — _index.md should be restored
-      const afterIndex = await gitMem.getIndexContent();
+      const afterIndex = await exMem.getIndexContent();
       assert.ok(afterIndex && afterIndex.length > 50);
     });
   });
@@ -157,20 +157,20 @@ describe("GitMem", () => {
   describe("pinned items", () => {
     it("detects missing pinned items", async () => {
       // Current state has "MA: 10/30 [pinned]"
-      const snapshot = await gitMem.context.readSnapshot();
+      const snapshot = await exMem.context.readSnapshot();
 
       // Simulate LLM removing the pinned item
-      await gitMem.context.writeFile(
+      await exMem.context.writeFile(
         "strategy-params.md",
         "# Strategy\n- RSI: 70\n",
       );
 
-      const missing = await gitMem.context.findMissingPinnedItems(snapshot);
+      const missing = await exMem.context.findMissingPinnedItems(snapshot);
       assert.ok(missing.size > 0);
 
       // Recover
-      await gitMem.context.recoverPinnedItems(missing);
-      const recovered = await gitMem.context.readFile("strategy-params.md");
+      await exMem.context.recoverPinnedItems(missing);
+      const recovered = await exMem.context.readFile("strategy-params.md");
       assert.ok(recovered?.includes("[pinned]"));
     });
   });

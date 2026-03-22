@@ -2,7 +2,7 @@
  * Context file management.
  *
  * Handles reading, writing, validation of context files
- * within the .git-mem/context/ directory.
+ * within the .exmem/context/ directory.
  *
  * Design reference: DESIGN.md §4, §5.2 step 5, §8
  */
@@ -13,7 +13,7 @@ import type {
   ContextSnapshot,
   ConsolidationOutput,
   ValidationResult,
-  GitMemConfig,
+  ExMemConfig,
 } from "./types.ts";
 
 // Rough estimate: 1 token ≈ 4 chars for English, ~2 chars for CJK
@@ -42,7 +42,7 @@ export class ContextManager {
 
   constructor(
     private repoPath: string,
-    private config: GitMemConfig,
+    private config: ExMemConfig,
   ) {
     this.contextPath = join(repoPath, config.contextDir);
   }

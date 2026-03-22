@@ -1,6 +1,6 @@
 # 设计决策记录
 
-本文档记录 git-mem 设计过程中的关键决策、考虑过的替代方案、
+本文档记录 exmem 设计过程中的关键决策、考虑过的替代方案、
 以及最终选择的理由。按决策时间排序。
 
 ---
@@ -40,7 +40,7 @@
 **真正需要存储的是**: 从对话中提炼出的结构化理解（Context），
 这是 Pi JSONL 中没有的。
 
-**Trade-off**: 牺牲了从 git-mem 直接获取原始对话的能力。
+**Trade-off**: 牺牲了从 exmem 直接获取原始对话的能力。
 如果 Agent 需要原始对话细节，需要回到 Pi JSONL
 （通过 `ctx.sessionManager.getEntries()`）。
 这极少发生——Context 文件中的精炼信息通常足够。
@@ -76,7 +76,7 @@
 **演化过程**: 7 (初始) → 5 (合并写入工具) → 1 (去掉所有读取工具)
 
 **关键论点**: Agent 是编程助手，它本来就会用 git。
-`bash("cd .git-mem && git show abc123:context/file.md")`
+`bash("cd .exmem && git show abc123:context/file.md")`
 等价于 `mem_recall("abc123", "file.md")`，
 但前者不需要额外工具，后者需要注册工具、占 system prompt tokens、
 增加 LLM 选择负担。
@@ -87,7 +87,7 @@ write + git add + git commit + 幂等检查 的原子性——
 
 **Trade-off**: Agent 需要知道 git 命令（通过 system prompt 教）。
 这对编程 Agent 来说不是问题。
-但对非编程 Agent（如果 git-mem 被移植到其他场景），
+但对非编程 Agent（如果 exmem 被移植到其他场景），
 可能需要恢复自定义读取工具。
 
 ---

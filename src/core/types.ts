@@ -1,5 +1,5 @@
 /**
- * Core type definitions for git-mem.
+ * Core type definitions for exmem.
  *
  * Design reference: DESIGN.md §3.2, §4, §5
  */
@@ -8,8 +8,8 @@
 // Configuration
 // ---------------------------------------------------------------------------
 
-export interface GitMemConfig {
-  /** Path to the .git-mem repository (absolute or relative to cwd) */
+export interface ExMemConfig {
+  /** Path to the .exmem repository (absolute or relative to cwd) */
   repoPath: string;
 
   /** Context files directory within the repo */
@@ -25,8 +25,8 @@ export interface GitMemConfig {
   segmentThreshold: number;
 }
 
-export const DEFAULT_CONFIG: GitMemConfig = {
-  repoPath: ".git-mem",
+export const DEFAULT_CONFIG: ExMemConfig = {
+  repoPath: ".exmem",
   contextDir: "context",
   tokenBudget: 8000,
   budgetOverflowRatio: 1.2,

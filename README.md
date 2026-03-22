@@ -1,4 +1,4 @@
-# git-mem
+# exmem
 
 LLM Agent 的外部认知记忆系统。
 
@@ -8,43 +8,43 @@ LLM Agent 的外部认知记忆系统。
 
 LLM 的 context window 有限。对话超长后 compaction 将历史压缩为一段摘要——信息在多轮 compaction 中逐渐衰减，无法定向查询，无法回溯演化。
 
-git-mem 解决这个问题：**对话是过程，Context 是产物。** git-mem 将 Context 持久化在 git 仓库中，compaction 只是一次 commit，历史永远可以回来看。
+exmem 解决这个问题：**对话是过程，Context 是产物。** exmem 将 Context 持久化在 git 仓库中，compaction 只是一次 commit，历史永远可以回来看。
 
 ## 安装
 
 ### 方式 1：直接试用（不安装）
 
 ```bash
-pi -e /path/to/git-mem
+pi -e /path/to/exmem
 ```
 
 ### 方式 2：安装到全局
 
 ```bash
-pi install /path/to/git-mem
+pi install /path/to/exmem
 ```
 
 ### 方式 3：安装到项目
 
 ```bash
-pi install -l /path/to/git-mem
+pi install -l /path/to/exmem
 ```
 
 ### 方式 4：从 Git 仓库安装
 
 ```bash
 # 发布后可用：
-pi install git:github.com/user/git-mem
+pi install git:github.com/user/exmem
 ```
 
-安装后，pi 启动时自动加载 git-mem 扩展。
+安装后，pi 启动时自动加载 exmem 扩展。
 
 ## 安装后会发生什么
 
-1. Pi 启动时，git-mem 在项目目录下创建 `.git-mem/` 仓库（自动，无需手动操作）
+1. Pi 启动时，exmem 在项目目录下创建 `.exmem/` 仓库（自动，无需手动操作）
 2. System prompt 增加一段 "Context Memory" 说明，告诉 Agent 它有记忆能力
 3. 一个新工具 `ctx_update` 可用——Agent 可以随时将重要信息写入 context 文件
-4. 每次 compaction 时，git-mem 自动将对话中的信息整合到 context 文件并 git commit
+4. 每次 compaction 时，exmem 自动将对话中的信息整合到 context 文件并 git commit
 
 **你不需要做任何额外配置。** 安装即生效。
 
@@ -75,19 +75,19 @@ ctx_update(file="constraints.md", content="...", message="add MaxDD constraint")
 
 ```bash
 # 读当前 context
-read(".git-mem/context/strategy-params.md")
+read(".exmem/context/strategy-params.md")
 
 # 查看版本历史
-bash("cd .git-mem && git log --oneline -- context/strategy-params.md")
+bash("cd .exmem && git log --oneline -- context/strategy-params.md")
 
 # 读取历史版本
-bash("cd .git-mem && git show abc123:context/strategy-params.md")
+bash("cd .exmem && git show abc123:context/strategy-params.md")
 
 # 搜索历史
-bash("cd .git-mem && git log --all --oneline --grep='Sharpe'")
+bash("cd .exmem && git log --all --oneline --grep='Sharpe'")
 
 # 对比版本变化
-bash("cd .git-mem && git diff abc123 def456 -- context/strategy-params.md")
+bash("cd .exmem && git diff abc123 def456 -- context/strategy-params.md")
 ```
 
 ### 安全机制
@@ -95,7 +95,7 @@ bash("cd .git-mem && git diff abc123 def456 -- context/strategy-params.md")
 - **`[pinned]`**：关键约束标记为不可删除，代码级验证
 - **快照回滚**：固化前 git commit 快照，验证失败自动回滚
 - **后置验证**：5 项检查（_index.md 完整性、[pinned] 保留、大小预算、文件非空、解析成功）
-- **降级保底**：任何失败自动回退到 Pi 默认 compaction，不会比没装 git-mem 更差
+- **降级保底**：任何失败自动回退到 Pi 默认 compaction，不会比没装 exmem 更差
 
 ## 示例场景
 
@@ -105,27 +105,27 @@ bash("cd .git-mem && git diff abc123 def456 -- context/strategy-params.md")
 用户: "v2 结果最好，回到 v2 参数，帮我分析 MA 周期和 Sharpe 的关系"
 
 Agent:
-  bash("cd .git-mem && git log --oneline -- context/strategy-params.md")
+  bash("cd .exmem && git log --oneline -- context/strategy-params.md")
   → ghi9012  v2: MA 10/30, RSI 70
 
-  bash("cd .git-mem && git show ghi9012:context/strategy-params.md")
+  bash("cd .exmem && git show ghi9012:context/strategy-params.md")
   → 拿到 v2 完整参数
 
-  bash("cd .git-mem && git diff ghi9012 abc1234 -- context/strategy-params.md")
+  bash("cd .exmem && git diff ghi9012 abc1234 -- context/strategy-params.md")
   → 看到 MA 10/30 → 20/50
 
-  bash("cd .git-mem && git diff ghi9012 abc1234 -- context/backtest-results.md")
+  bash("cd .exmem && git diff ghi9012 abc1234 -- context/backtest-results.md")
   → 看到 Sharpe 1.5 → 1.1
 
   Agent: "增大 MA 周期导致 Sharpe 下降，建议回退到 v2。"
 ```
 
-**在没有 git-mem 的情况下，v1-v3 的参数和结果已被 compaction 压缩成"测试了多组参数"，Agent 无法回答这个问题。**
+**在没有 exmem 的情况下，v1-v3 的参数和结果已被 compaction 压缩成"测试了多组参数"，Agent 无法回答这个问题。**
 
 ## 文件结构
 
 ```
-.git-mem/                    ← 自动创建的 git 仓库
+.exmem/                    ← 自动创建的 git 仓库
 └── context/
     ├── _index.md            ← 全局概览（= compaction summary）
     └── <topic>.md           ← LLM 按需创建的领域文件
@@ -137,13 +137,13 @@ Agent:
 
 ## 配置
 
-git-mem 开箱即用，无需配置。以下参数可在代码中调整：
+exmem 开箱即用，无需配置。以下参数可在代码中调整：
 
 | 参数 | 默认值 | 说明 |
 |------|-------|------|
 | `tokenBudget` | 8000 | Context 文件总大小上限 (tokens) |
 | `segmentThreshold` | 40000 | 对话超过此长度时分段处理 (tokens) |
-| `repoPath` | `.git-mem` | git 仓库路径 |
+| `repoPath` | `.exmem` | git 仓库路径 |
 
 ## 技术细节
 

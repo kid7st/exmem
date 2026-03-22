@@ -1,7 +1,7 @@
 /**
  * Git CLI wrapper.
  *
- * All git operations execute against the .git-mem repository.
+ * All git operations execute against the .exmem repository.
  * Uses execFile (not exec) to avoid shell injection.
  *
  * Design reference: DESIGN.md §10 module structure
@@ -105,7 +105,7 @@ export class GitOps {
   async show(ref: string, path: string): Promise<string> {
     const result = await this.exec(["show", `${ref}:${path}`]);
     if (result.code !== 0) {
-      throw new GitMemError(`git show failed: ${result.stderr}`, "GIT_SHOW_FAILED");
+      throw new ExMemError(`git show failed: ${result.stderr}`, "GIT_SHOW_FAILED");
     }
     return result.stdout;
   }
@@ -176,7 +176,7 @@ export class GitOps {
       : await this.exec(args);
 
     if (result.code !== 0) {
-      throw new GitMemError(
+      throw new ExMemError(
         `git ${args[0]} failed (code ${result.code}): ${result.stderr}`,
         "GIT_COMMAND_FAILED",
       );
@@ -189,12 +189,12 @@ export class GitOps {
 // Error type
 // ---------------------------------------------------------------------------
 
-export class GitMemError extends Error {
+export class ExMemError extends Error {
   constructor(
     message: string,
     public code: string,
   ) {
     super(message);
-    this.name = "GitMemError";
+    this.name = "ExMemError";
   }
 }

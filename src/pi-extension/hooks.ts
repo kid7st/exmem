@@ -4,7 +4,7 @@
  * Design reference: DESIGN.md §5.2, §6.3, §8
  */
 
-import type { GitMem } from "../core/git-mem.ts";
+import type { ExMem } from "../core/exmem.ts";
 import {
   buildConsolidationPrompt,
   buildSystemPrompt,
@@ -16,8 +16,8 @@ import {
 // session_start (DESIGN §8)
 // ---------------------------------------------------------------------------
 
-export async function onSessionStart(gitMem: GitMem): Promise<void> {
-  await gitMem.init();
+export async function onSessionStart(exMem: ExMem): Promise<void> {
+  await exMem.init();
 }
 
 // ---------------------------------------------------------------------------
@@ -25,10 +25,10 @@ export async function onSessionStart(gitMem: GitMem): Promise<void> {
 // ---------------------------------------------------------------------------
 
 export async function onBeforeAgentStart(
-  gitMem: GitMem,
+  exMem: ExMem,
   event: { prompt: string; systemPrompt: string },
 ): Promise<{ systemPrompt: string }> {
-  const status = await gitMem.getStatus();
+  const status = await exMem.getStatus();
   const memorySection = buildSystemPrompt(status.checkpoints, status.files);
 
   return {
@@ -54,7 +54,7 @@ export async function onBeforeAgentStart(
  * independent of any specific LLM client.
  */
 export async function onBeforeCompact(
-  gitMem: GitMem,
+  exMem: ExMem,
   opts: {
     /** Serialized conversation (from Pi's serializeConversation) */
     conversation: string;
@@ -74,7 +74,7 @@ export async function onBeforeCompact(
   const { conversation, tokensBefore, firstKeptEntryId, signal, callLLM } = opts;
 
   // Step 1: Read current context (DESIGN §5.2 step 2)
-  const currentContext = await gitMem.context.readSnapshot();
+  const currentContext = await exMem.context.readSnapshot();
   const isFirst =
     currentContext.files.size === 0 ||
     (currentContext.files.size === 1 &&
@@ -84,7 +84,7 @@ export async function onBeforeCompact(
   let prompt = buildConsolidationPrompt(
     currentContext,
     conversation,
-    gitMem.config.tokenBudget,
+    exMem.config.tokenBudget,
   );
 
   // Append format demo on first consolidation (DESIGN §5.4)
@@ -93,11 +93,11 @@ export async function onBeforeCompact(
   }
 
   // Step 3: Handle segmentation if conversation is too long (DESIGN §5.5)
-  const conversationTokens = gitMem.context.estimateTokens(conversation);
+  const conversationTokens = exMem.context.estimateTokens(conversation);
 
   let rawOutput: string;
-  if (conversationTokens > gitMem.config.segmentThreshold) {
-    rawOutput = await processSegmented(gitMem, currentContext, conversation, callLLM, signal);
+  if (conversationTokens > exMem.config.segmentThreshold) {
+    rawOutput = await processSegmented(exMem, currentContext, conversation, callLLM, signal);
   } else {
     // Single LLM call
     rawOutput = await callLLM(prompt, signal);
@@ -111,14 +111,14 @@ export async function onBeforeCompact(
   }
 
   // Step 5: Checkpoint (snapshot → apply → validate → commit/rollback)
-  const checkpoint = await gitMem.checkpoint(parsed);
+  const checkpoint = await exMem.checkpoint(parsed);
   if (!checkpoint) {
     // Validation failed → already rolled back
     return null;
   }
 
   // Step 6: Read the updated _index.md as the compaction summary
-  const summary = await gitMem.getIndexContent();
+  const summary = await exMem.getIndexContent();
   if (!summary) {
     return null;
   }
@@ -139,7 +139,7 @@ export async function onBeforeCompact(
  * Splits conversation in half and processes in two LLM calls.
  */
 async function processSegmented(
-  gitMem: GitMem,
+  exMem: ExMem,
   initialContext: import("../core/types.ts").ContextSnapshot,
   conversation: string,
   callLLM: (prompt: string, signal: AbortSignal) => Promise<string>,
@@ -154,22 +154,22 @@ async function processSegmented(
   const prompt1 = buildConsolidationPrompt(
     initialContext,
     segment1,
-    gitMem.config.tokenBudget,
+    exMem.config.tokenBudget,
   );
   const raw1 = await callLLM(prompt1, signal);
   const parsed1 = parseConsolidationOutput(raw1);
 
   // Apply first half's updates to context (without committing)
   if (parsed1) {
-    await gitMem.context.applyConsolidation(parsed1);
+    await exMem.context.applyConsolidation(parsed1);
   }
 
   // Call 2: Process second half with updated context
-  const updatedContext = await gitMem.context.readSnapshot();
+  const updatedContext = await exMem.context.readSnapshot();
   const prompt2 = buildConsolidationPrompt(
     updatedContext,
     segment2,
-    gitMem.config.tokenBudget,
+    exMem.config.tokenBudget,
   );
 
   return callLLM(prompt2, signal);

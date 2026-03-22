@@ -1,8 +1,8 @@
 /**
- * GitMem — main entry point for git-mem core library.
+ * ExMem — main entry point for exmem core library.
  *
  * Orchestrates GitOps and ContextManager to provide:
- * - init: Initialize the .git-mem repository
+ * - init: Initialize the .exmem repository
  * - checkpoint: Two-phase consolidation (snapshot → update → validate → commit)
  * - updateFile: Atomic file update + commit (for ctx_update tool)
  *
@@ -10,22 +10,22 @@
  */
 
 import type {
-  GitMemConfig,
+  ExMemConfig,
   Checkpoint,
   ContextSnapshot,
   ConsolidationOutput,
   ValidationResult,
 } from "./types.ts";
 import { DEFAULT_CONFIG } from "./types.ts";
-import { GitOps, GitMemError } from "./git-ops.ts";
+import { GitOps, ExMemError } from "./git-ops.ts";
 import { ContextManager } from "./context.ts";
 
-export class GitMem {
+export class ExMem {
   readonly git: GitOps;
   readonly context: ContextManager;
-  readonly config: GitMemConfig;
+  readonly config: ExMemConfig;
 
-  constructor(config: Partial<GitMemConfig> = {}) {
+  constructor(config: Partial<ExMemConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
     this.git = new GitOps(this.config.repoPath);
     this.context = new ContextManager(this.config.repoPath, this.config);
@@ -34,7 +34,7 @@ export class GitMem {
   // ── Initialization (DESIGN §8) ────────────────────────────────
 
   /**
-   * Initialize the .git-mem repository.
+   * Initialize the .exmem repository.
    * Idempotent: safe to call multiple times.
    * Returns true if newly created, false if already existed.
    */
@@ -49,11 +49,11 @@ export class GitMem {
 
     if (!isExisting || created) {
       // Configure git for clean commits
-      await this.git.exec(["config", "user.email", "git-mem@local"]);
-      await this.git.exec(["config", "user.name", "git-mem"]);
+      await this.git.exec(["config", "user.email", "exmem@local"]);
+      await this.git.exec(["config", "user.name", "exmem"]);
 
       if (await this.git.hasChanges()) {
-        await this.git.addAndCommit("[init] initialize git-mem");
+        await this.git.addAndCommit("[init] initialize exmem");
       }
       return true;
     }
@@ -184,4 +184,4 @@ export class GitMem {
   }
 }
 
-export { GitMemError } from "./git-ops.ts";
+export { ExMemError } from "./git-ops.ts";

@@ -1,14 +1,14 @@
 /**
- * git-mem: External cognitive memory system for LLM agents.
+ * exmem: External cognitive memory system for LLM agents.
  *
  * Public API exports.
  */
 
-export { GitMem, GitMemError } from "./core/git-mem.ts";
+export { ExMem, ExMemError } from "./core/exmem.ts";
 export { GitOps } from "./core/git-ops.ts";
 export { ContextManager } from "./core/context.ts";
 export type {
-  GitMemConfig,
+  ExMemConfig,
   Checkpoint,
   ContextSnapshot,
   ConsolidationInput,
