@@ -524,18 +524,19 @@ exmem/
 
 ## 11. 实施阶段
 
-### Phase 1: 核心系统
+### Phase 1: 核心系统 ✅
 
-- [ ] GitOps — git CLI 封装 (init, add, commit, show, log, diff, grep)
-- [ ] Context — 文件读写 + _index.md 模板 + [pinned] 验证 + 大小检查
-- [ ] ExMem — 主类 (init, checkpoint)
-- [ ] ctx_update 工具 — 幂等检查 + 写入 + 自动 commit message
-- [ ] session_start hook — 初始化 .exmem/
-- [ ] session_before_compact hook — 完整固化流程 (快照/固化/验证/回滚)
-- [ ] before_agent_start hook — system prompt 增强
-- [ ] prompts.ts — 固化 prompt + 首次格式示范
-- [ ] 分段处理 — >40k tokens 时拆分
-- [ ] 测试
+- [x] GitOps — git CLI 封装 (17 methods: init, add, commit, show, log, diff, grep, ...)
+- [x] Context — 文件读写 (11 methods) + _index.md 模板 + [pinned] 验证+恢复 + 大小检查
+- [x] ExMem — 主类 (init, updateFile, checkpoint with snapshot/rollback)
+- [x] ctx_update 工具 — 幂等检查 + 写入 + 自动 commit message (含 diff stat)
+- [x] session_start hook — 初始化 .exmem/
+- [x] session_before_compact hook — 完整固化流程 (快照/固化/验证/回滚/降级)
+- [x] before_agent_start hook — system prompt 增强
+- [x] prompts.ts — 固化 prompt (5 rules, English) + 首次格式示范 (domain-neutral)
+- [x] 分段处理 — >40k tokens 时拆分为 2 次 LLM 调用
+- [x] 测试 — 15 tests (init, idempotency, checkpoint, validation, rollback, [pinned], XML parsing)
+- [x] 国际化 — 英文 README + 中文翻译, 英文源码/prompts, MIT License, CONTRIBUTING.md
 
 ### Phase 2: 自动回忆
 
