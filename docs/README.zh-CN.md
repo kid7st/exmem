@@ -1,6 +1,6 @@
 # exmem
 
-**LLM Agent 的外部认知记忆系统。**
+**LLM Agent 的结构化工作记忆系统。**
 
 [English](../README.md)
 

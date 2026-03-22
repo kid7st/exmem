@@ -1,10 +1,10 @@
 # exmem
 
-**External memory for LLM agents.**
+**Structured working memory for LLM agents.**
 
 [中文文档](docs/README.zh-CN.md)
 
-exmem externalizes your AI agent's mental model — goals, decisions, constraints, experiment results — into Git-versioned context files that survive compaction. When context is compressed, nothing is lost. Every version can be recalled, diffed, and searched.
+exmem externalizes your AI agent's mental model — goals, decisions, constraints, experiment results — into Git-versioned context files. It keeps your agent focused across long conversations and preserves context across compaction. Every version can be recalled, diffed, and searched.
 
 ## The Problem
 

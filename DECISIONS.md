@@ -288,6 +288,68 @@ LLM 学会的是"怎么输出"，而不是"输出什么"。
 
 ---
 
+## D13: 三层架构模型
+
+**决策**: 将系统分为三层：Organization (L1) → Retrieval (L2) → Attention (L3)。
+
+**来源**: 综合 31 篇研究后的 SYNTHESIS.md 分析。
+
+**发现**: 大多数 Agent 记忆系统只解决了 L1-L2，
+在 L3 (让 LLM 实际利用检索到的信息) 上失败。
+Memory-Probe (ICLR 2026) 明确证实瓶颈在利用而非检索。
+
+**影响**: Phase 3 从"扩展功能"重定义为"注意力管理"。
+
+---
+
+## D14: Working Memory Brief (WMB) 设计
+
+**决策**: 使用完整 Narrative（不截取）+ [pinned] 扫描 + 文件列表，
+纯代码生成，注入到消息列表末尾。
+
+**考虑过的方案**:
+
+| 方案 | 可靠性 | 复杂度 | 选择？ |
+|------|--------|--------|--------|
+| A: 给 _index.md 加 Status 结构字段 | 最高 | 中 | ❌ 违反 D9 |
+| B: NLP 语义提取 goal/status | 中 | 中 | ❌ 可能提取错误 |
+| **C: 直接使用完整 Narrative** | **高** | **最低** | ✅ |
+
+**Path C 理由**:
+- Narrative 不截取——1M context 中多 300 tokens 是 0.03%
+- 不截取 = 不需要 sentence splitting 代码 = 更简单
+- 不可能提取出"错误"信息（原样展示）
+- [pinned] 提取 100% 可靠（regex）
+- 文件列表 100% 可靠（readdir）
+
+**注入位置**: 消息列表末尾。利用 Lost in the Middle 的 recency bias，
+与 auto-recall 的 primacy zone 形成 U 型注意力曲线两端覆盖。
+
+**频率控制**: 对话 >20 消息 OR context 有变化时注入。
+
+---
+
+## D15: 问题重心迁移 — 存储 → 注意力
+
+**决策**: 项目定位从 "External memory" 迁移到 "Structured working memory"。
+
+**背景**: Context window 从 200K 扩展到 1M+。
+Compaction 触发变少，但注意力稀释成为主要问题。
+
+**证据**:
+- Lost in the Middle: 中间位置信息利用率低 30%
+- Memory-Probe: 利用瓶颈 > 检索瓶颈
+- Letta: 即使 1M context 仍保持 8-16K 核心 context
+- Cursor/Cline: 精确少量 > 海量模糊
+
+**两个问题并存**:
+- Compaction 场景仍需要（L1 + compaction hook）
+- 注意力场景成为主要问题（L3 + WMB + context hook）
+
+**不是替换，是增加重心。**
+
+---
+
 ## 设计演化时间线
 
 ```
@@ -310,6 +372,10 @@ v8   回填: 12 → 18 个元素 (加回高价值安全机制)
 v9   定稿: 19 个元素 (加分段处理)
       ↓ "领域具体的示例会锚定 LLM"
 v10  格式示范: 用占位符替代领域示例，避免锚定效应
+      ↓ "context window 扩大到 1M, 注意力稀释成为新问题"
+v11  三层模型: Organization → Retrieval → Attention
+      ↓ "31 篇研究综合, Memory-Probe 证实利用瓶颈"
+v12  WMB: Working Memory Brief, 纯代码, 注入消息末尾 (recency bias)
 
 完整的演化过程保留在 archive/ 目录中。
 ```

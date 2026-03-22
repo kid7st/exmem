@@ -1,19 +1,31 @@
-# exmem: External Memory for LLM Agents
+# exmem: Structured Working Memory for LLM Agents
 
-LLM Agent 的外部认知记忆系统。
+LLM Agent 的结构化工作记忆系统。
 
 ## 1. 问题
 
 LLM Agent 通过对话逐步构建一个**心智模型**——对项目的理解、
-做出的决策、发现的约束、尝试过的方案。
+做出的决策、发现的约束、尝试过的方案。这个心智模型面临两个威胁：
 
-当 context window 满了，compaction 将心智模型压缩为一段摘要。这个过程有三个缺陷：
+### 1.1 信息丢失（compaction）
 
-1. **每次从头生成**——信息在多轮 compaction 中逐渐衰减
-2. **扁平无结构**——无法定向查询某个方面
-3. **没有历史**——无法回溯心智模型的演化
+当 context window 满了，compaction 将心智模型压缩为一段摘要：
+1. **每次从头生成**——信息在多轮 compaction 中衰减
+2. **扁平无结构**——无法定向查询
+3. **没有历史**——无法回溯演化
 
-原始对话并没有丢（Pi JSONL 保留了），但**对话是过程，Context 是产物**。
+### 1.2 注意力稀释（长 context）
+
+随着 context window 扩展到 1M tokens，compaction 触发变少，
+但新问题出现：信息在 context 中但 LLM 无法有效利用。
+
+**Lost in the Middle (Liu et al., 2023)**：LLM 对 context 中间位置的
+信息利用率比开头/结尾低 30 个百分点。
+**Memory-Probe (ICLR 2026)**：瓶颈不是**检索**而是**利用**——
+即使信息在 context 中，LLM 仍然经常不使用它。
+
+原始对话数据并没有丢（Pi JSONL 保留了），
+但**对话是过程，Context 是产物**。
 从对话恢复 Context 等于让 LLM 重新读一遍所有对话——不可行。
 
 ### 场景
@@ -29,27 +41,40 @@ v4: MA 20/50, RSI 70  → Sharpe 1.1
 
 用户说："v2 的结果最好，回到 v2 参数，帮我分析 MA 周期和 Sharpe 的关系。"
 
-现有 compaction 下，v1-v3 已被压缩成"测试了多组参数"。Agent 无法回答。
+- 在 compaction 场景下：v1-v3 被压缩成"测试了多组参数"
+- 在长 context 场景下：v1 的对话在 500K tokens 之前，LLM 注意力到不了
+
+两种情况下 Agent 都无法回答。
 
 ---
 
 ## 2. 解法
 
-将心智模型**外化**为一组 Context 文件，用 **Git 版本控制**其演化。
+将心智模型**外化**为 Git 版本控制的 Context 文件，
+通过三层机制确保信息被**组织、检索、利用**：
 
 ```
-对话流 → Agent 处理 → 心智模型变化 → 写入 Context 文件 → git commit
-                                                              │
-                                          git log / show / diff / grep
-                                          随时可回溯任意历史版本
+┌─────────────────────────────────────────────┐
+│ Layer 3: ATTENTION (注意力)                   │
+│ 确保 LLM 在生成时实际利用信息                   │
+│ → Working Memory Brief 注入到 context 末尾     │
+├─────────────────────────────────────────────┤
+│ Layer 2: RETRIEVAL (检索)                     │
+│ 从历史中找到相关信息并提供给 LLM                 │
+│ → auto-recall 搜索 + 注入                     │
+├─────────────────────────────────────────────┤
+│ Layer 1: ORGANIZATION (组织)                  │
+│ 结构化存储，可查找、可版本控制                    │
+│ → Context 文件 + git 版本控制                  │
+└─────────────────────────────────────────────┘
 ```
 
-Git 的语义恰好匹配 Context 的操作需求：
+Git 的语义匹配 Context 的操作需求：
 
 | 需求 | Git 能力 |
 |------|---------|
 | 查看某时刻的 Context | `git show <hash>:<file>` |
-| 对比 Context 如何变化 | `git diff`（同一文件跨版本，有意义的 diff）|
+| 对比 Context 如何变化 | `git diff`（同一文件跨版本）|
 | 按方面追踪历史 | `git log -- <file>` |
 | 搜索历史 | `git grep` / `git log --grep` |
 
@@ -60,26 +85,36 @@ Git 的语义恰好匹配 Context 的操作需求：
 ### 3.1 全局架构
 
 ```
-┌───────────────────────────────────────────────────────────┐
-│                        Agent                               │
-│                   (Context Window)                          │
-│                                                            │
-│  已有工具:  read, write, bash, edit                         │
-│  新增工具:  ctx_update (唯一)                               │
-│  读取记忆:  bash + 标准 git 命令                            │
-├───────────────────────────────────────────────────────────┤
-│                   Pi Extension                              │
-│                                                            │
-│  session_start          → 初始化 .exmem/                 │
-│  session_before_compact → 记忆固化 (核心)                   │
-│  before_agent_start     → system prompt 增强               │
-├───────────────────────────────────────────────────────────┤
-│                   .exmem/ (Git 仓库)                      │
-│                                                            │
-│  context/                                                  │
-│  ├── _index.md          ← 全局概览 (= compaction summary)  │
-│  └── <topic>.md         ← LLM 按需创建的领域文件            │
-└───────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────┐
+│                          Agent                               │
+│                     (Context Window)                          │
+│                                                              │
+│  ┌─ BEGINNING (high attention) ─────────────────────────┐    │
+│  │ System prompt + exmem instructions                    │    │
+│  └───────────────────────────────────────────────────────┘    │
+│  ┌─ MIDDLE (attention fades) ───────────────────────────┐    │
+│  │ Conversation history...                               │    │
+│  └───────────────────────────────────────────────────────┘    │
+│  ┌─ END (high attention) ───────────────────────────────┐    │
+│  │ Working Memory Brief (WMB)                            │    │
+│  │ 📝 Narrative  ⚠️ [pinned] constraints  📁 Files      │    │
+│  └───────────────────────────────────────────────────────┘    │
+│                                                              │
+│  Tools: read, write, bash, edit, ctx_update                  │
+├─────────────────────────────────────────────────────────────┤
+│                     Pi Extension (4 hooks)                    │
+│                                                              │
+│  session_start          → 初始化 .exmem/                     │
+│  before_agent_start     → system prompt + auto-recall        │
+│  context                → WMB 注入 (Layer 3)                 │
+│  session_before_compact → 记忆固化                            │
+├─────────────────────────────────────────────────────────────┤
+│                     .exmem/ (Git 仓库)                        │
+│                                                              │
+│  context/                                                    │
+│  ├── _index.md     ← 概览 (compaction summary + WMB source) │
+│  └── <topic>.md    ← LLM 按需创建的领域文件                   │
+└─────────────────────────────────────────────────────────────┘
 ```
 
 ### 3.2 组件清单
@@ -87,10 +122,10 @@ Git 的语义恰好匹配 Context 的操作需求：
 | 组件 | 数量 | 说明 |
 |------|------|------|
 | 自定义工具 | 1 | `ctx_update`：写入 Context 文件 + git commit |
-| Extension hooks | 3 | `session_start`, `session_before_compact`, `before_agent_start` |
+| Extension hooks | 4 | `session_start`, `before_agent_start`, `context`, `session_before_compact` |
 | 必需文件 | 1 | `_index.md` |
 | 额外存储 | 1 | `.exmem/` git 仓库 |
-| LLM 额外调用 | 0 | 替换 Pi 默认的 compaction 摘要生成，非新增 |
+| LLM 额外调用 | 0 | 固化替换 Pi 默认摘要生成；WMB 纯代码生成 |
 
 ---
 
@@ -106,13 +141,16 @@ Git 的语义恰好匹配 Context 的操作需求：
     └── <topic>.md             ← LLM 按需创建的领域文件
 ```
 
-**不预设固定文件结构。** 只有 `_index.md` 是必需的。
-其他文件由 LLM 根据对话内容自行创建，
-每个文件覆盖一个独立的话题领域。
+不预设固定文件结构。其他文件由 LLM 根据对话内容自行创建。
 
 ### 4.2 `_index.md`
 
-全局概览，同时作为 Pi 的 compaction summary。示例：
+服务两个目的：
+
+1. **Compaction summary**——compaction 后 Agent 看到的上下文概览
+2. **WMB 数据源**——代码从中提取 Narrative 生成 Working Memory Brief
+
+示例：
 
 ```markdown
 # Project Context
@@ -130,202 +168,214 @@ v2 (MA 10/30, RSI 70) 表现最优 (Sharpe 1.5)。
 - constraints.md — MaxDD ≤ 25%
 ```
 
-**Narrative** 是关键：它提供叙事性上下文，
-让 Agent 读完后能续上工作。
+Narrative 的第一句应当明确当前目标/焦点，第二句概括当前进展。
 
 ### 4.3 话题状态管理
 
 Context 文件记录**全部已知信息**，不只是当前焦点。
-话题用状态标注区分：
+焦点切换时标记 ⏸️ Paused，不删除内容：
 
 ```markdown
 ## 🟢 Active: 动量策略市场原理研究
-- 理解动量因子的理论基础
-
 ## ⏸️ Paused: 均线交叉策略回测
 - v2 参数最优 (MA 10/30, RSI 70, Sharpe 1.5)
 ```
 
-焦点切换时标记 ⏸️，不删除内容。
-
 ### 4.4 `[pinned]` 标记
 
-用户的关键约束标记为不可删除：
+服务两个目的：
+
+1. **固化保护**——代码验证所有 [pinned] 条目在 consolidation 后仍然存在
+2. **注意力锚定**——[pinned] 条目在每次 WMB 中展示，确保 Agent 持续看到关键约束
 
 ```markdown
 - MaxDD ≤ 25% [pinned]
-- 必须兼容 Python 3.8+ [pinned]
 ```
-
-固化时代码验证所有 `[pinned]` 条目在更新后仍然存在。
-如果 LLM 删了，代码自动恢复。
 
 ### 4.5 大小控制
 
 所有 Context 文件总大小有预算（默认 ~8k tokens）。
 超出时，固化 prompt 指示 LLM 精简不活跃内容。
-被精简的信息仍保留在 git 历史中，可通过 `git show` 恢复。
+被精简的信息仍保留在 git 历史中。
 
 ---
 
-## 5. 核心机制：两阶段记忆更新
+## 5. 核心机制
+
+### 5.1 两阶段记忆更新
 
 ```
 阶段 1: 实时编码 (对话过程中)
     Agent 通过 ctx_update 随时记录重要信息
-    → 小增量、高保真
-    → 信息在产生的瞬间被捕获
 
 阶段 2: 记忆固化 (compaction 时)
     LLM 审视即将压缩的对话 + 当前 Context 文件
-    → 查漏补缺
-    → 整理状态
-    → git commit
+    → 查漏补缺 → 整理状态 → git commit
 ```
 
-### 5.1 阶段 1：ctx_update 工具
+### 5.2 ctx_update 工具
 
 ```typescript
 ctx_update(file, content, message?)
 ```
 
-- `file`: 文件路径（相对于 context/），如 `"strategy-params.md"`
-- `content`: 完整的新文件内容
-- `message`(可选): 变更描述
-
 内部操作：
 1. 对比新旧内容，无变化则跳过（幂等）
 2. 写入文件
-3. `git add -A && git commit`（commit message 自动包含 `git diff --stat`）
+3. `git add -A && git commit`（commit message 含 `git diff --stat`）
 
-### 5.2 阶段 2：记忆固化流程
+### 5.3 记忆固化流程
 
 ```
 session_before_compact 触发
     │
     ├─ 1. [代码] 快照：git commit -m "[snapshot]"
-    │     (后续验证失败时可回滚到此状态)
     │
-    ├─ 2. [代码] 读取当前 context 文件 + 序列化对话
-    │     如果对话 > 40k tokens → 分段处理 (见 §5.5)
+    ├─ 2. [代码] 读取 context 文件 + 序列化对话
+    │     如果对话 > 40k tokens → 分段处理 (§5.6)
     │
-    ├─ 3. [LLM] 固化调用 (见 §5.3)
-    │     模型：使用当前 session 模型，或配置中指定的固化模型
-    │     输入: 当前 context 文件 + 对话
-    │     输出: 更新后的文件 (结构化格式)
-    │     首次固化时附加格式示范 (见 §5.4)
+    ├─ 3. [LLM] 固化调用 (§5.4)
+    │     首次固化时附加格式示范 (§5.5)
     │
-    ├─ 4. [代码] 解析 LLM 输出，写入文件
+    ├─ 4. [代码] 解析输出 + 写入文件
     │
     ├─ 5. [代码] 后置验证
     │     ✓ _index.md 存在、非空、包含 Narrative
-    │     ✓ [pinned] 条目完整
+    │     ✓ [pinned] 条目完整（缺失则自动恢复）
     │     ✓ 总大小在预算内 (允许 20% 溢出)
     │     ✓ 无文件被异常清空
     │     ✓ 解析成功
     │
-    ├─ 6a. 验证通过 → git commit -m "[context] ..."
-    │
-    ├─ 6b. 验证失败 → git checkout HEAD -- context/  (回滚到快照)
-    │                  返回 undefined (Pi 走默认 compaction)
+    ├─ 6a. 通过 → git commit
+    ├─ 6b. 失败 → git checkout 回滚 → Pi 默认 compaction
     │
     └─ 7. 返回 _index.md 内容作为 compaction summary
 ```
 
-### 5.3 固化 Prompt
+### 5.4 固化 Prompt
 
 ```
-你管理一组 Context 文件。基于以下新对话，更新这些文件。
+You manage a set of Context files. Update them based on the new conversation.
 
-当前文件:
+Current files:
 <current-context>
-{每个文件的路径和完整内容}
+{files}
 </current-context>
 
-新对话:
+New conversation:
 <conversation>
-{序列化的对话}
+{conversation}
 </conversation>
 
-规则：
-1. 新信息加到对应文件，没有合适文件就新建
-   (每个文件覆盖一个独立的话题领域)
-   优先保留：目标和成功标准、验证/测试结果、约束条件 [pinned]、
-   已尝试但失败的方向及原因
-2. 信息变了就更新，被否定了就删掉或标注
-3. 不要删除标记为 [pinned] 的条目
-   如果新信息与 [pinned] 矛盾，在旁边标注 ⚠️ 冲突，不要覆盖
-4. 用户切换话题时标记旧话题 ⏸️ Paused，不要删除内容
-5. 总大小控制在 {budget} tokens 以内，超出时精简不活跃内容
+Rules:
+1. Add new info to corresponding file, create new file if needed.
+   Prioritize: goals/criteria, test results, constraints [pinned],
+   failed approaches with reasons.
+2. Update changed info. Remove or annotate negated info.
+3. Do NOT delete [pinned] items. If conflict, annotate ⚠️ — don't overwrite.
+4. On topic switch, mark old topic ⏸️ Paused — don't delete.
+5. Keep total under {budget} tokens. Condense inactive content if over.
 
-输出格式：
+Output:
 <context-update>
 <file path="..." action="update|create|unchanged">
-(文件完整内容)
+(content)
 </file>
 ...
-(务必包含更新后的 _index.md，其中要有 Narrative 段落)
+(_index.md must include Narrative: first sentence = current goal/focus,
+ second = current status)
 </context-update>
 ```
 
-### 5.4 首次固化的格式示范
+### 5.5 首次格式示范
 
-仅在首次固化时（context/ 目录为空或只有初始模板时）
-附加到固化 prompt 末尾。
-
-**使用纯格式示范，不绑定特定领域，避免锚定效应：**
+仅在首次固化时附加到 prompt 末尾。使用占位内容，避免领域锚定：
 
 ```
-## 输出格式示范（以下为占位内容，仅展示格式）
+## Output format demo (placeholder content, format only)
 
 <context-update>
-<file path="[根据实际内容命名].md" action="create">
-# [话题名称]
-## 🟢 Active: [目标或任务描述]
-- [从对话中提取的关键信息]
-- [用户的硬性要求] [pinned]
-
-### [可选：进展/结果记录]
-- [尝试 1]: [结果] → [评价]
-- [尝试 2]: [结果] → [评价]
-</file>
-<file path="[另一个话题].md" action="create">
-# [另一个独立话题]
-- [相关信息]
+<file path="[topic-name].md" action="create">
+# [Topic]
+## 🟢 Active: [goal]
+- [key info]
+- [hard requirement] [pinned]
 </file>
 <file path="_index.md" action="create">
 # Project Context
-
 ## Narrative
-[2-3 句话：在做什么、做到哪了、下一步是什么]
-
+[current goal/focus. current status/progress.]
 ## Files
-- [file].md: [一行摘要]
-- [file].md: [一行摘要]
+- [file].md: [summary]
 </file>
 </context-update>
-
-格式要点：
-- 文件名小写加连字符，描述内容（如 api-design.md, test-results.md）
-- 每个文件覆盖一个独立话题，不要把所有信息放进一个文件
-- 用 🟢 Active / ⏸️ Paused 标注话题状态
-- 用户的硬性要求标记 [pinned]
-- _index.md 必须有 Narrative（叙事概括）和 Files（文件清单）
-- action="unchanged" 的文件不需要包含内容
 ```
 
-后续固化不需要此示范（已有 context 文件作为隐式示例）。
+### 5.6 分段处理
 
-### 5.5 分段处理
+当对话超过 ~40k tokens 时拆分为 2 次 LLM 调用，
+每次输入更小，提取更精准。
 
-当 messagesToSummarize 超过 ~40k tokens 时：
+### 5.7 Working Memory Brief (WMB)
+
+**解决 Layer 3（注意力）问题。** 在每次 LLM 调用前，
+将结构化摘要注入到消息列表末尾，利用 LLM 的 recency bias
+确保关键信息被实际利用。
+
+**WMB 由纯代码生成，零 LLM 调用，延迟 ~1ms：**
+
+```typescript
+function generateWMB(indexContent, allFiles, fileNames): string {
+  // 1. 完整 Narrative (不截取——context 空间充足)
+  const narrative = extractNarrative(indexContent);
+
+  // 2. [pinned] 项扫描 (所有文件, 最多展示 5 个)
+  const pinned = scanPinnedItems(allFiles);
+
+  // 3. 文件列表
+  const files = fileNames.filter(f => f !== "_index.md");
+
+  // 4. 组装
+  return `[Working Memory — review before responding]
+📝 ${narrative}
+${pinned.map(p => `⚠️ ${p}`).join("\n")}
+📁 ${files.join(", ")}`;
+}
+```
+
+**注入条件**（频率控制）：
 
 ```
-LLM call 1: current context + conversation[0:half] → updated context v1
-LLM call 2: updated context v1 + conversation[half:end] → updated context v2
+注入 when:
+  对话长度 > 20 条消息 (注意力开始稀释)
+  OR 自上次注入以来有 ctx_update (context 已变)
+
+不注入 when:
+  对话 < 10 条消息 (太短, 无需刷新)
+  AND context 无变化
 ```
 
-每次调用的输入更小，提取更精准。
+**WMB 示例**：
+
+```
+[Working Memory — review before responding]
+📝 正在从均线策略转向研究动量策略。均线策略经过 4 轮参数优化，
+v2 (MA 10/30, RSI 70) 表现最优 (Sharpe 1.5)。
+用户希望先理解动量因子理论基础再做对比。
+⚠️ MaxDD ≤ 25% [pinned]
+⚠️ 数据范围: 2020-2023 [pinned]
+📁 goals.md, strategy-params.md, backtest-results.md, constraints.md
+```
+
+**注入位置**：消息列表末尾。
+与 auto-recall（消息前部）形成注意力 U 型曲线的两端覆盖：
+
+```
+[system prompt]                  ← primacy zone
+[auto-recall: 历史 context]      ← primacy zone
+[conversation...]                ← dead zone
+[WMB: 当前状态]                  ← recency zone
+```
 
 ---
 
@@ -333,7 +383,7 @@ LLM call 2: updated context v1 + conversation[half:end] → updated context v2
 
 ### 6.1 写入：ctx_update
 
-唯一的自定义工具。Agent 在对话中遇到重要信息时调用：
+唯一的自定义工具。记录重要信息到 context 文件：
 
 ```
 ctx_update(file="constraints.md", content="...", message="add MaxDD constraint")
@@ -341,86 +391,76 @@ ctx_update(file="constraints.md", content="...", message="add MaxDD constraint")
 
 ### 6.2 读取：bash + 标准 git 命令
 
-无自定义读取工具。Agent 使用已有的 `read` 和 `bash`：
+无自定义读取工具：
 
 ```bash
-# 读取当前 context 文件
-read(".exmem/context/strategy-params.md")
-
-# 查看某个文件的版本历史
-bash("cd .exmem && git log --oneline -- context/strategy-params.md")
-
-# 读取历史版本
-bash("cd .exmem && git show ghi9012:context/strategy-params.md")
-
-# 搜索历史
-bash("cd .exmem && git log --all --oneline --grep='Sharpe'")
-
-# 对比两个版本
-bash("cd .exmem && git diff ghi9012 abc1234 -- context/strategy-params.md")
+read(".exmem/context/strategy-params.md")                              # 当前
+bash("cd .exmem && git log --oneline -- context/strategy-params.md")   # 历史
+bash("cd .exmem && git show ghi9012:context/strategy-params.md")       # 版本
+bash("cd .exmem && git log --all --oneline --grep='Sharpe'")           # 搜索
+bash("cd .exmem && git diff ghi9012 abc1234 -- context/")              # 对比
 ```
 
-### 6.3 System Prompt 增强
+### 6.3 System Prompt
 
 ```markdown
 ## Context Memory
 
-你有一个外部记忆系统在 `.exmem/` 目录下，用 Git 版本控制。
-你的知识和理解被持久化在 context 文件中。
+You have a structured working memory at `.exmem/`, version-controlled with Git.
 
-**记录信息** — 遇到以下内容时，用 ctx_update 记录：
-- 用户的约束/要求 ("必须", "不要", "限制")
-- 量化结果 (数值, 百分比, 指标)
-- 参数/配置变更 ("改为", "设置为")
-- 决策及理由 ("决定用", "选择")
-- 目标变更 ("接下来做", "先放下")
-关键约束标记为 [pinned]，如: `MaxDD ≤ 25% [pinned]`
+**Maintain context** — Use ctx_update when you encounter:
+- Constraints/requirements ("must", "don't", "limit")
+- Quantitative results (numbers, percentages, metrics)
+- Parameter changes ("change to", "set to")
+- Decisions ("decided to use", "chose")
+- Goal changes ("next we'll do", "put X on hold")
+Mark critical constraints as [pinned]: `MaxDD ≤ 25% [pinned]`
 
-**查询历史** — 需要历史信息时，用 bash 执行 git 命令：
-  cd .exmem && git log --oneline -- context/<file>    # 版本历史
-  cd .exmem && git show <hash>:context/<file>         # 读取历史版本
-  cd .exmem && git diff <hash1> <hash2> -- context/   # 对比变化
-  cd .exmem && git log --all --oneline --grep='...'   # 搜索
+**Review context** — In long conversations, refresh your understanding:
+  read(".exmem/context/_index.md")
 
-**切换话题** — 标记旧话题为 ⏸️ Paused，不要删除内容。
+**Query history** — Use bash with git commands:
+  cd .exmem && git log --oneline -- context/<file>
+  cd .exmem && git show <hash>:context/<file>
+  cd .exmem && git diff <hash1> <hash2> -- context/
+  cd .exmem && git log --all --oneline --grep='...'
 
-当前记忆: {N} 个检查点, {M} 个 context 文件
+**Switch topics** — Mark old topics ⏸️ Paused, don't delete content.
+
+Current memory: {N} checkpoints, {M} context files
 ```
 
 ---
 
 ## 7. 安全机制
 
-| 机制 | 防护对象 | 实现方式 |
-|------|---------|---------|
-| 固化前快照 | LLM 输出垃圾时可回滚 | 固化前 `git commit -m "[snapshot]"` |
-| 后置验证 (5 项) | 捕获明显的固化失败 | 确定性代码检查 |
-| [pinned] 验证 | 关键约束不被删除 | 字符串匹配 + 自动恢复 |
-| [pinned] 冲突标注 | 关键约束不被语义覆盖 | 固化 prompt 规则 3 |
-| ctx_update 幂等 | 重复写入不产生空 commit | 内容对比后再 commit |
-| 分段处理 | 长对话的固化质量 | >40k tokens 时拆分为 2 次调用 |
-| 降级到 Pi 默认 | 固化彻底失败时保底 | 验证失败 → 回滚快照 → 返回 undefined |
+| 机制 | 防护对象 | 实现 |
+|------|---------|------|
+| 固化前快照 | LLM 输出垃圾 | 固化前 `git commit -m "[snapshot]"` |
+| 后置验证 (5 项) | 明显的固化失败 | 确定性代码检查 |
+| [pinned] 验证 + 恢复 | 关键约束被删 | 字符串匹配 + 自动恢复 |
+| [pinned] 冲突标注 | 关键约束被语义覆盖 | 固化 prompt 规则 3 |
+| ctx_update 幂等 | 空 commit | 内容对比 |
+| 分段处理 | 长对话固化质量 | >40k 时拆分 |
+| 降级到 Pi 默认 | 固化彻底失败 | 回滚 + 返回 undefined |
 
 ---
 
 ## 8. 初始化
 
-`session_start` hook 中执行：
+`session_start` hook：
 
 ```
 if .exmem/ 不存在:
     git init .exmem/
     mkdir .exmem/context/
-    写入 .exmem/context/_index.md (初始模板，见下)
+    写入 _index.md 模板
     git add -A && git commit -m "[init] initialize exmem"
 
-读取当前状态:
-    checkpointCount = git rev-list --count HEAD
-    contextFileCount = ls context/*.md | wc -l
-    (用于 system prompt 中的 {N} 和 {M})
+读取状态 → {N} checkpoints, {M} files → 用于 system prompt
 ```
 
-**初始 _index.md 模板：**
+初始 _index.md：
 
 ```markdown
 # Project Context
@@ -439,57 +479,44 @@ if .exmem/ 不存在:
 ### 量化策略场景
 
 ```
-─── v1-v4 迭代过程 (多轮对话 + 多次 compaction) ───
+─── v1-v4 迭代 (多轮对话 + compaction) ───
 
-Agent 在每次参数变更后调用:
-  ctx_update("strategy-params.md", "...v2: MA 10/30, RSI 70...", "v2 params")
-  ctx_update("backtest-results.md", "...v2: Sharpe 1.5...", "v2 results")
+Agent 每次参数变更后调用:
+  ctx_update("strategy-params.md", "...", "v2 params")
+  ctx_update("backtest-results.md", "...", "v2 results")
 
-compaction 时, 固化 hook 确保所有信息被整合到 context 文件中
+compaction 时固化 hook 整合信息到 context 文件
 
-─── 用户: "v2 的结果最好，回到 v2 参数" ───
+─── 用户: "v2 最好，回到 v2 参数" ───
 
 Agent:
   bash("cd .exmem && git log --oneline -- context/strategy-params.md")
-  → abc1234  v4: MA 20/50
-    def5678  v3: MA 10/30 RSI 65
-    ghi9012  v2: MA 10/30 RSI 70     ← 目标
-    jkl3456  v1: MA 10/20
+  → ghi9012  v2: MA 10/30 RSI 70     ← 目标
 
   bash("cd .exmem && git show ghi9012:context/strategy-params.md")
-  → 拿到 v2 完整参数
+  → v2 完整参数
 
-─── 用户: "帮我分析 MA 周期对 Sharpe 的影响" ───
+─── 用户: "分析 MA 周期对 Sharpe 的影响" ───
 
 Agent:
   bash("cd .exmem && git diff ghi9012 abc1234 -- context/strategy-params.md")
-  → MA fast 10→20, slow 30→50
-
   bash("cd .exmem && git diff ghi9012 abc1234 -- context/backtest-results.md")
-  → Sharpe 1.5→1.1, MaxDD -15%→-22%
-
-  Agent: "增大 MA 周期 (10/30→20/50) 导致 Sharpe 从 1.5 降到 1.1。
-          建议回退到 v2 的 MA 10/30。"
+  → "MA 周期增大导致 Sharpe 下降，建议回退到 v2"
 ```
 
-### 焦点切换场景
+### 注意力管理场景
 
 ```
-─── 用户: "先放下均线策略，研究动量策略的原理" ───
+─── 对话进行了 50 轮，早期约束被淹没 ───
 
-Agent:
-  ctx_update("goals.md",
-    "# Goals\n## 🟢 Active: 动量策略研究\n...\n## ⏸️ Paused: 均线策略\n...",
-    "switch focus to momentum")
+WMB 在每次 LLM 调用前自动注入:
+  [Working Memory — review before responding]
+  📝 正在优化均线策略。v2 (MA 10/30) 最优。
+  ⚠️ MaxDD ≤ 25% [pinned]
+  📁 strategy-params.md, backtest-results.md
 
-  (对话继续, compaction 发生, context 文件被固化更新)
-
-─── 用户: "好，回到均线策略" ───
-
-Agent:
-  read(".exmem/context/goals.md")
-  → 看到均线策略标记为 ⏸️，有 v2 最优参数的摘要
-  → 如需细节: bash("cd .exmem && git log ...")
+Agent 即使在第 50 轮仍然能看到 [pinned] 约束
+→ 不会生成违反约束的方案
 ```
 
 ---
@@ -498,58 +525,57 @@ Agent:
 
 ```
 exmem/
-├── package.json
-├── tsconfig.json
-├── DESIGN.md                       ← 本文档
-├── DECISIONS.md                    ← 设计决策记录
-│
 ├── src/
-│   ├── index.ts                    ← 公开导出
+│   ├── index.ts
 │   ├── core/
-│   │   ├── types.ts                ← 类型定义
-│   │   ├── git-ops.ts              ← Git CLI 封装
-│   │   ├── context.ts              ← Context 文件读写 + 验证
-│   │   └── exmem.ts              ← ExMem 主类 (init, checkpoint)
+│   │   ├── types.ts              ← 类型定义
+│   │   ├── git-ops.ts            ← Git CLI 封装
+│   │   ├── context.ts            ← Context 文件读写 + 验证
+│   │   └── exmem.ts              ← ExMem 主类
 │   ├── pi-extension/
-│   │   ├── index.ts                ← Extension 入口
-│   │   ├── hooks.ts                ← session_start / session_before_compact
-│   │   ├── tools.ts                ← ctx_update 工具定义
-│   │   └── prompts.ts              ← 固化 prompt + 格式示范
+│   │   ├── index.ts              ← Extension 入口 (4 hooks + 1 tool)
+│   │   ├── hooks.ts              ← session_start / compact / agent_start
+│   │   ├── tools.ts              ← ctx_update 工具
+│   │   ├── prompts.ts            ← 固化 prompt + 格式示范
+│   │   ├── auto-recall.ts        ← 关键词搜索 + 历史注入 (Layer 2)
+│   │   └── wmb.ts                ← Working Memory Brief 生成 (Layer 3)
 │   └── tests/
-│
-└── archive/                        ← 设计演化过程
+├── DESIGN.md
+├── DECISIONS.md
+└── archive/
 ```
 
 ---
 
 ## 11. 实施阶段
 
-### Phase 1: 核心系统 ✅
+### Phase 1: 组织层 (Layer 1) ✅
 
-- [x] GitOps — git CLI 封装 (17 methods: init, add, commit, show, log, diff, grep, ...)
-- [x] Context — 文件读写 (11 methods) + _index.md 模板 + [pinned] 验证+恢复 + 大小检查
-- [x] ExMem — 主类 (init, updateFile, checkpoint with snapshot/rollback)
-- [x] ctx_update 工具 — 幂等检查 + 写入 + 自动 commit message (含 diff stat)
-- [x] session_start hook — 初始化 .exmem/
-- [x] session_before_compact hook — 完整固化流程 (快照/固化/验证/回滚/降级)
-- [x] before_agent_start hook — system prompt 增强
-- [x] prompts.ts — 固化 prompt (5 rules, English) + 首次格式示范 (domain-neutral)
-- [x] 分段处理 — >40k tokens 时拆分为 2 次 LLM 调用
-- [x] 测试 — 15 tests (init, idempotency, checkpoint, validation, rollback, [pinned], XML parsing)
-- [x] 国际化 — 英文 README + 中文翻译, 英文源码/prompts, MIT License, CONTRIBUTING.md
+- [x] GitOps, Context, ExMem 核心类
+- [x] ctx_update 工具（幂等 + 自动 commit）
+- [x] session_start / session_before_compact / before_agent_start hooks
+- [x] 固化 prompt (5 rules) + 格式示范 + 分段处理
+- [x] [pinned] 验证恢复 + 快照回滚 + 后置验证 + 降级
+- [x] 15 tests
 
-### Phase 2: 自动回忆 ✅
+### Phase 2: 检索层 (Layer 2) ✅
 
-- [x] ExMem 扩展 — log (filtered to [context] commits), searchCommitMessages, searchContent, search (combined with scoring)
-- [x] auto-recall.ts — extractKeywords (English + Chinese + quoted strings + numbers) + autoRecall (pure code, no LLM)
-- [x] before_agent_start hook — inject recalled context as hidden custom message (exmem-recall)
-- [x] 注入控制 — maxInjectTokens (2000), scoreThreshold (1.0), overlap detection, top-2 hits max
-- [x] 精确率优先 — 6 guard conditions (short prompt, no history, no keywords, low score, high overlap, budget)
-- [x] 测试 — 16 new tests (extractKeywords: 6, log: 2, search: 4, autoRecall: 4)
+- [x] ExMem.log / searchCommitMessages / searchContent / search
+- [x] auto-recall (纯代码, 关键词匹配, 6 道 guard)
+- [x] before_agent_start 注入 (hidden custom message)
+- [x] 16 tests (31 total)
 
-### Phase 3: 扩展
+### Phase 3: 注意力层 (Layer 3)
 
-- [ ] Pi `/tree` 的 git 分支联动
-- [ ] `/mem-status` 命令
-- [ ] 配置系统 (大小预算, 固化模型选择, 分段阈值)
+- [ ] wmb.ts — WMB 生成（Narrative + [pinned] 扫描 + 文件列表）
+- [ ] context hook — 注入 WMB 到消息末尾
+- [ ] 频率控制（>20 消息 OR context 变化时注入）
+- [ ] auto-recall 阈值调整（3 → 2）
+- [ ] system prompt 更新（"structured working memory" 定位）
+- [ ] 测试
+
+### Phase 4: 打磨
+
+- [ ] 配置系统（token 预算、WMB 注入阈值）
+- [ ] Pi `/tree` 分支联动
 - [ ] 文档和示例
