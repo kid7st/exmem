@@ -21,10 +21,14 @@ const MAX_PINNED_DISPLAY = 5;
  * 1. Full Narrative from _index.md (no truncation — context space is ample)
  * 2. [pinned] items scanned from ALL context files (max 5 shown)
  * 3. File list from context directory
+ * 4. Staleness warning if context hasn't been updated recently
  *
  * Returns null if there's nothing meaningful to inject.
  */
-export async function generateWMB(exMem: ExMem): Promise<string | null> {
+export async function generateWMB(
+  exMem: ExMem,
+  turnsSinceLastUpdate?: number,
+): Promise<string | null> {
   // Read _index.md
   const indexContent = await exMem.getIndexContent();
   if (!indexContent || indexContent.includes("No context recorded yet")) {
@@ -60,8 +64,16 @@ export async function generateWMB(exMem: ExMem): Promise<string | null> {
     wmb += `📁 ${fileNames.join(", ")}`;
   }
 
+  // 5. Staleness warning — remind agent to update context
+  if (turnsSinceLastUpdate !== undefined && turnsSinceLastUpdate >= STALE_THRESHOLD) {
+    wmb += `\n⏰ Context last updated ${turnsSinceLastUpdate} turns ago — consider using ctx_update`;
+  }
+
   return wmb;
 }
+
+/** Turns since last ctx_update before showing staleness warning */
+const STALE_THRESHOLD = 10;
 
 /**
  * Determine whether WMB should be injected for this LLM call.

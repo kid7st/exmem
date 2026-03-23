@@ -3,13 +3,13 @@
  *
  * Registers:
  * - 1 tool: ctx_update
- * - 4 hooks: session_start, before_agent_start, context, session_before_compact
+ * - 5 hooks: session_start, before_agent_start, context, agent_end, session_before_compact
  *
  * Design reference: DESIGN.md §3
  */
 
 import { ExMem } from "../core/exmem.ts";
-import { onSessionStart, onBeforeAgentStart, onBeforeCompact } from "./hooks.ts";
+import { onSessionStart, onBeforeAgentStart, onBeforeCompact, periodicConsolidation } from "./hooks.ts";
 import { generateWMB, shouldInjectWMB } from "./wmb.ts";
 
 // ExtensionAPI type — imported dynamically to avoid hard dependency
@@ -20,6 +20,8 @@ export default function exMemExtension(pi: ExtensionAPI) {
   // Will be set on session_start when we have access to ctx.cwd
   let exMem: ExMem | null = null;
   let initFailed = false;
+  let turnsSinceLastCtxUpdate = 0;
+  const PERIODIC_CONSOLIDATION_INTERVAL = 20;
 
   // ── session_start: Initialize .exmem/ (DESIGN §8) ─────────
 
@@ -85,7 +87,7 @@ export default function exMemExtension(pi: ExtensionAPI) {
       // Frequency control (DESIGN §5.7)
       if (!shouldInjectWMB(messageCount, contextChanged)) return;
 
-      const wmb = await generateWMB(exMem);
+      const wmb = await generateWMB(exMem, turnsSinceLastCtxUpdate);
       if (!wmb) return;
 
       // Inject at END of message list — recency bias (DESIGN §5.7)
@@ -101,6 +103,77 @@ export default function exMemExtension(pi: ExtensionAPI) {
       };
     } catch {
       // Non-critical: conversation works without WMB
+    }
+  });
+
+  // ── agent_end: Turn counting + periodic consolidation (Dir 3) ────
+
+  pi.on("agent_end", async (event: any, ctx: any) => {
+    if (!exMem || initFailed) return;
+
+    turnsSinceLastCtxUpdate++;
+
+    // Dir 3: periodic consolidation when Agent hasn't updated context
+    if (turnsSinceLastCtxUpdate < PERIODIC_CONSOLIDATION_INTERVAL) return;
+
+    try {
+      // Collect recent messages from session for consolidation
+      const entries = ctx.sessionManager.getEntries();
+      if (!entries || entries.length === 0) return;
+
+      // Import Pi's serialization
+      const { convertToLlm, serializeConversation } = await import(
+        "@mariozechner/pi-coding-agent"
+      );
+
+      // Take the last N message entries
+      const recentEntries = entries
+        .filter((e: any) => e.type === "message")
+        .slice(-PERIODIC_CONSOLIDATION_INTERVAL * 3) // ~3 messages per turn
+        .map((e: any) => e.message)
+        .filter(Boolean);
+
+      if (recentEntries.length === 0) return;
+
+      const recentConversation = serializeConversation(convertToLlm(recentEntries));
+
+      // Resolve model + API key
+      const model = ctx.model;
+      if (!model) return;
+      const apiKey = await ctx.modelRegistry.getApiKey(model);
+      if (!apiKey) return;
+
+      const { complete } = await import("@mariozechner/pi-ai");
+
+      const success = await periodicConsolidation(exMem, {
+        recentConversation,
+        signal: AbortSignal.timeout(60_000),
+        callLLM: async (prompt: string, sig: AbortSignal) => {
+          const response = await complete(
+            model,
+            {
+              messages: [
+                {
+                  role: "user" as const,
+                  content: [{ type: "text" as const, text: prompt }],
+                  timestamp: Date.now(),
+                },
+              ],
+            },
+            { apiKey, maxTokens: 8192, signal: sig },
+          );
+          return response.content
+            .filter((c: any): c is { type: "text"; text: string } => c.type === "text")
+            .map((c: any) => c.text)
+            .join("\n");
+        },
+      });
+
+      if (success) {
+        turnsSinceLastCtxUpdate = 0; // Reset after successful consolidation
+      }
+    } catch {
+      // Non-critical: periodic consolidation failure doesn't affect conversation
     }
   });
 
@@ -243,6 +316,9 @@ export default function exMemExtension(pi: ExtensionAPI) {
           details: { file, changed: false },
         };
       }
+
+      // Reset staleness counter — Agent is actively maintaining context
+      turnsSinceLastCtxUpdate = 0;
 
       return {
         content: [{ type: "text" as const, text: `Updated context/${file} (commit: ${hash}).` }],

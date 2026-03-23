@@ -170,6 +170,41 @@ describe("generateWMB", () => {
 
 // ── shouldInjectWMB ─────────────────────────────────────────
 
+describe("generateWMB staleness", () => {
+  let exMem: ExMem;
+  let testDir: string;
+
+  before(async () => {
+    const t = await createPopulatedExMem();
+    exMem = t.exMem;
+    testDir = t.dir;
+  });
+
+  after(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  it("shows staleness warning when turnsSinceLastUpdate >= 10", async () => {
+    const wmb = await generateWMB(exMem, 15);
+    assert.ok(wmb);
+    assert.ok(wmb.includes("⏰"));
+    assert.ok(wmb.includes("15 turns ago"));
+    assert.ok(wmb.includes("ctx_update"));
+  });
+
+  it("does not show warning when turnsSinceLastUpdate < 10", async () => {
+    const wmb = await generateWMB(exMem, 5);
+    assert.ok(wmb);
+    assert.ok(!wmb.includes("⏰"));
+  });
+
+  it("does not show warning when turnsSinceLastUpdate is undefined", async () => {
+    const wmb = await generateWMB(exMem);
+    assert.ok(wmb);
+    assert.ok(!wmb.includes("⏰"));
+  });
+});
+
 describe("shouldInjectWMB", () => {
   it("does not inject for short conversations without changes", () => {
     assert.equal(shouldInjectWMB(5, false), false);

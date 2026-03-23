@@ -219,6 +219,64 @@ async function processSegmented(
 }
 
 // ---------------------------------------------------------------------------
+// Periodic consolidation (Dir 3 — 1M context safety net)
+// ---------------------------------------------------------------------------
+
+/**
+ * Periodic consolidation: sync context files from recent conversation
+ * WITHOUT triggering compaction. This is a "maintenance" operation,
+ * not a "compression" operation.
+ *
+ * Called by agent_end hook when:
+ * - turnsSinceLastUpdate >= consolidationInterval
+ * - AND context files haven't been recently updated by ctx_update
+ *
+ * Reuses the same consolidation prompt + parsing + validation as compaction.
+ */
+export async function periodicConsolidation(
+  exMem: ExMem,
+  opts: {
+    /** Recent conversation text to consolidate from */
+    recentConversation: string;
+    /** LLM callback */
+    callLLM: (prompt: string, signal: AbortSignal) => Promise<string>;
+    /** Abort signal */
+    signal: AbortSignal;
+  },
+): Promise<boolean> {
+  const { recentConversation, callLLM, signal } = opts;
+
+  if (!recentConversation.trim()) return false;
+
+  const currentContext = await exMem.context.readSnapshot();
+  const isFirst =
+    currentContext.files.size === 0 ||
+    (currentContext.files.size === 1 &&
+      (currentContext.files.get("_index.md") ?? "").includes("No context recorded yet"));
+
+  let prompt = buildConsolidationPrompt(
+    currentContext,
+    recentConversation,
+    exMem.config.tokenBudget,
+  );
+
+  if (isFirst) {
+    prompt += "\n\n" + FORMAT_DEMO;
+  }
+
+  try {
+    const rawOutput = await callLLM(prompt, signal);
+    const parsed = parseConsolidationOutput(rawOutput);
+    if (!parsed) return false;
+
+    const checkpoint = await exMem.checkpoint(parsed);
+    return checkpoint !== null;
+  } catch {
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 

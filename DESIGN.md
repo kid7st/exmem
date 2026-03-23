@@ -107,6 +107,7 @@ Git 的语义匹配 Context 的操作需求：
 │  session_start          → 初始化 .exmem/                     │
 │  before_agent_start     → system prompt + auto-recall        │
 │  context                → WMB 注入 (Layer 3)                 │
+│  agent_end              → 主动 consolidation (1M 安全网)       │
 │  session_before_compact → 记忆固化                            │
 ├─────────────────────────────────────────────────────────────┤
 │                     .exmem/ (Git 仓库)                        │
@@ -122,7 +123,7 @@ Git 的语义匹配 Context 的操作需求：
 | 组件 | 数量 | 说明 |
 |------|------|------|
 | 自定义工具 | 1 | `ctx_update`：写入 Context 文件 + git commit |
-| Extension hooks | 4 | `session_start`, `before_agent_start`, `context`, `session_before_compact` |
+| Extension hooks | 5 | `session_start`, `before_agent_start`, `context`, `agent_end`, `session_before_compact` |
 | 必需文件 | 1 | `_index.md` |
 | 额外存储 | 1 | `.exmem/` git 仓库 |
 | LLM 额外调用 | 0 | 固化替换 Pi 默认摘要生成；WMB 纯代码生成 |
@@ -355,6 +356,37 @@ ${pinned.map(p => `⚠️ ${p}`).join("\n")}
   AND context 无变化
 ```
 
+**Staleness 提醒**：当 Agent 连续 ≥10 轮未调用 ctx_update 时，
+WMB 末尾显示 `⏰ Context last updated N turns ago — consider using ctx_update`。
+
+### 5.8 主动 Consolidation（1M Context 安全网）
+
+在 1M context 下 compaction 可能整个 session 不触发。
+`agent_end` hook 每轮递增计数，当 Agent 连续 N 轮（默认 20）
+未调用 ctx_update 时，自动触发一次 consolidation——
+复用 §5.3-5.4 的 prompt 和 parsing，但不触发 Pi compaction。
+
+```
+agent_end 触发
+    │
+    ├─ turnsSinceLastCtxUpdate++
+    │
+    ├─ if < N → 跳过
+    │
+    ├─ if ≥ N:
+    │    收集最近 N×3 条 message entry (从 sessionManager)
+    │    序列化为对话文本
+    │    调用 consolidation prompt + parsing
+    │    checkpoint (snapshot → apply → validate → commit/rollback)
+    │    成功 → 重置计数器
+    │
+    └─ 失败 → 静默，下一个 interval 重试
+```
+
+这是"同步"而非"压缩"——更新 context 文件但不删除对话消息。
+ctx_update 调用成功时也会重置计数器，
+因此当 Agent 主动维护 context 时，此机制零开销。
+
 **WMB 示例**：
 
 ```
@@ -533,7 +565,7 @@ exmem/
 │   │   ├── context.ts            ← Context 文件读写 + 验证
 │   │   └── exmem.ts              ← ExMem 主类
 │   ├── pi-extension/
-│   │   ├── index.ts              ← Extension 入口 (4 hooks + 1 tool)
+│   │   ├── index.ts              ← Extension 入口 (5 hooks + 1 tool)
 │   │   ├── hooks.ts              ← session_start / compact / agent_start
 │   │   ├── tools.ts              ← ctx_update 工具
 │   │   ├── prompts.ts            ← 固化 prompt + 格式示范
@@ -565,14 +597,18 @@ exmem/
 - [x] before_agent_start 注入 (hidden custom message)
 - [x] 16 tests (31 total)
 
-### Phase 3: 注意力层 (Layer 3) ✅
+### Phase 3: 注意力层 (Layer 3) + 1M 安全网 ✅
 
 - [x] wmb.ts — WMB 生成（完整 Narrative + [pinned] 扫描去重 + 文件列表，纯代码 ~1ms）
 - [x] context hook — 注入 WMB 到消息末尾（recency bias）
 - [x] 频率控制（>20 消息 OR git HEAD 变化时注入）
+- [x] WMB staleness 提醒（≥10 轮未更新时显示 ⏰ 提醒）
 - [x] auto-recall 阈值调整（3 → 2）
-- [x] system prompt 更新（"structured working memory" 定位）
-- [x] 测试 — 11 new tests (generateWMB: 5, shouldInjectWMB: 6), 42 total
+- [x] system prompt 更新（主动维护引导 + "structured working memory" 定位）
+- [x] agent_end hook — 主动 periodic consolidation（每 20 轮安全网）
+- [x] periodicConsolidation() — 复用 consolidation prompt/parsing/validation
+- [x] turn 计数 + ctx_update 重置逻辑
+- [x] 测试 — 47 total
 
 ### Phase 4: 打磨
 

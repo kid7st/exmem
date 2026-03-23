@@ -19,21 +19,23 @@ export function buildSystemPrompt(checkpoints: number, fileCount: number): strin
 You have a structured working memory at \`.exmem/\`, version-controlled with Git.
 Your knowledge and understanding are persisted in context files.
 
-**Record information** — Use ctx_update when you encounter:
-- User constraints/requirements ("must", "don't", "limit", "require")
+**Maintain context** — After completing each task step or receiving results, use ctx_update to record what you learned and what changed:
+- Constraints/requirements ("must", "don't", "limit") — mark as [pinned]
 - Quantitative results (numbers, percentages, metrics)
-- Parameter/config changes ("change to", "set to")
-- Decisions and rationale ("decided to use", "chose", "instead of")
+- Parameter/config changes
+- Decisions and rationale
 - Goal changes ("next we'll do", "put X on hold")
-Mark critical constraints as [pinned], e.g.: \`MaxDD ≤ 25% [pinned]\`
+
+**Review context** — In long conversations, refresh your understanding:
+  read(".exmem/context/_index.md")
 
 **Query history** — Use bash with standard git commands:
-  cd .exmem && git log --oneline -- context/<file>    # version history
-  cd .exmem && git show <hash>:context/<file>         # read historical version
-  cd .exmem && git diff <hash1> <hash2> -- context/   # compare versions
-  cd .exmem && git log --all --oneline --grep='...'   # search
+  cd .exmem && git log --oneline -- context/<file>
+  cd .exmem && git show <hash>:context/<file>
+  cd .exmem && git diff <hash1> <hash2> -- context/
+  cd .exmem && git log --all --oneline --grep='...'
 
-**Switching topics** — Mark old topics as ⏸️ Paused, don't delete their content.
+**Switch topics** — Mark old topics ⏸️ Paused, don't delete content.
 
 Current memory: ${checkpoints} checkpoints, ${fileCount} context files`;
 }
