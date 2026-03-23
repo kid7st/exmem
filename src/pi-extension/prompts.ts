@@ -16,7 +16,7 @@ import type { ContextSnapshot } from "../core/types.ts";
 export function buildSystemPrompt(checkpoints: number, fileCount: number): string {
   return `## Context Memory
 
-You have an external memory system at \`.exmem/\`, version-controlled with Git.
+You have a structured working memory at \`.exmem/\`, version-controlled with Git.
 Your knowledge and understanding are persisted in context files.
 
 **Record information** — Use ctx_update when you encounter:

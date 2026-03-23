@@ -3,7 +3,7 @@
  *
  * Registers:
  * - 1 tool: ctx_update
- * - 3 hooks: session_start, session_before_compact, before_agent_start
+ * - 4 hooks: session_start, before_agent_start, context, session_before_compact
  *
  * Design reference: DESIGN.md §3
  */
@@ -11,6 +11,7 @@
 import { ExMem } from "../core/exmem.ts";
 import { createCtxUpdateTool } from "./tools.ts";
 import { onSessionStart, onBeforeAgentStart, onBeforeCompact } from "./hooks.ts";
+import { generateWMB, shouldInjectWMB } from "./wmb.ts";
 
 // ExtensionAPI type — imported dynamically to avoid hard dependency
 type ExtensionAPI = any;
@@ -57,6 +58,50 @@ export default function exMemExtension(pi: ExtensionAPI) {
       return { systemPrompt: result.systemPrompt };
     } catch {
       // Non-critical: agent works without memory prompt
+    }
+  });
+
+  // ── context: Working Memory Brief injection (DESIGN §5.7) ──────
+
+  let lastWmbContextHash: string | null = null; // Track context changes
+
+  pi.on("context", async (event: any, _ctx: any) => {
+    if (!exMem || initFailed) return;
+
+    try {
+      const messageCount = event.messages?.length ?? 0;
+
+      // Detect context changes: compare current head with last injected
+      let contextChanged = false;
+      try {
+        const currentHead = await exMem.git.head();
+        if (lastWmbContextHash !== null && currentHead !== lastWmbContextHash) {
+          contextChanged = true;
+        }
+        lastWmbContextHash = currentHead;
+      } catch {
+        // git head may fail if no commits yet
+      }
+
+      // Frequency control (DESIGN §5.7)
+      if (!shouldInjectWMB(messageCount, contextChanged)) return;
+
+      const wmb = await generateWMB(exMem);
+      if (!wmb) return;
+
+      // Inject at END of message list — recency bias (DESIGN §5.7)
+      return {
+        messages: [
+          ...event.messages,
+          {
+            role: "user" as const,
+            content: [{ type: "text" as const, text: wmb }],
+            timestamp: Date.now(),
+          },
+        ],
+      };
+    } catch {
+      // Non-critical: conversation works without WMB
     }
   });
 

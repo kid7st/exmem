@@ -565,14 +565,14 @@ exmem/
 - [x] before_agent_start 注入 (hidden custom message)
 - [x] 16 tests (31 total)
 
-### Phase 3: 注意力层 (Layer 3)
+### Phase 3: 注意力层 (Layer 3) ✅
 
-- [ ] wmb.ts — WMB 生成（Narrative + [pinned] 扫描 + 文件列表）
-- [ ] context hook — 注入 WMB 到消息末尾
-- [ ] 频率控制（>20 消息 OR context 变化时注入）
-- [ ] auto-recall 阈值调整（3 → 2）
-- [ ] system prompt 更新（"structured working memory" 定位）
-- [ ] 测试
+- [x] wmb.ts — WMB 生成（完整 Narrative + [pinned] 扫描去重 + 文件列表，纯代码 ~1ms）
+- [x] context hook — 注入 WMB 到消息末尾（recency bias）
+- [x] 频率控制（>20 消息 OR git HEAD 变化时注入）
+- [x] auto-recall 阈值调整（3 → 2）
+- [x] system prompt 更新（"structured working memory" 定位）
+- [x] 测试 — 11 new tests (generateWMB: 5, shouldInjectWMB: 6), 42 total
 
 ### Phase 4: 打磨
 

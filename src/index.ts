@@ -22,3 +22,4 @@ export type {
 } from "./core/types.ts";
 export { DEFAULT_CONFIG, DEFAULT_RECALL_CONFIG } from "./core/types.ts";
 export { autoRecall, extractKeywords } from "./pi-extension/auto-recall.ts";
+export { generateWMB, shouldInjectWMB } from "./pi-extension/wmb.ts";

@@ -105,9 +105,9 @@ export async function autoRecall(
   // Guard: skip if prompt is too short
   if (userPrompt.trim().length < 5) return null;
 
-  // Guard: skip if no history yet
+  // Guard: skip if no history yet (at least 1 ctx_update must have happened)
   const status = await exMem.getStatus();
-  if (status.checkpoints < 3) return null; // not enough history to recall from
+  if (status.checkpoints < 2) return null;
 
   // Step 1: Extract keywords
   const keywords = extractKeywords(userPrompt);
