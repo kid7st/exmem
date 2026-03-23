@@ -22,6 +22,7 @@ export default function exMemExtension(pi: ExtensionAPI) {
   let initFailed = false;
   let turnsSinceLastCtxUpdate = 0;
   const PERIODIC_CONSOLIDATION_INTERVAL = 20;
+  const COLD_START_INTERVAL = 5; // Much shorter when context is completely empty
 
   // ── session_start: Initialize .exmem/ (DESIGN §8) ─────────
 
@@ -88,7 +89,15 @@ export default function exMemExtension(pi: ExtensionAPI) {
       if (!shouldInjectWMB(messageCount, contextChanged)) return;
 
       const wmb = await generateWMB(exMem, turnsSinceLastCtxUpdate);
-      if (!wmb) return;
+
+      // If WMB has content, inject it
+      // If context is empty but stale, inject a standalone reminder
+      let injection: string | null = wmb;
+      if (!wmb && turnsSinceLastCtxUpdate >= 5) {
+        injection = `[Working Memory — no context recorded yet]\n⏰ ${turnsSinceLastCtxUpdate} turns into conversation with no context saved.\nUse ctx_update to record important information (goals, constraints, results).`;
+      }
+
+      if (!injection) return;
 
       // Inject at END of message list — recency bias (DESIGN §5.7)
       return {
@@ -96,7 +105,7 @@ export default function exMemExtension(pi: ExtensionAPI) {
           ...event.messages,
           {
             role: "user" as const,
-            content: [{ type: "text" as const, text: wmb }],
+            content: [{ type: "text" as const, text: injection }],
             timestamp: Date.now(),
           },
         ],
@@ -114,7 +123,15 @@ export default function exMemExtension(pi: ExtensionAPI) {
     turnsSinceLastCtxUpdate++;
 
     // Dir 3: periodic consolidation when Agent hasn't updated context
-    if (turnsSinceLastCtxUpdate < PERIODIC_CONSOLIDATION_INTERVAL) return;
+    // Adaptive interval: shorter when context is empty (cold start)
+    let interval = PERIODIC_CONSOLIDATION_INTERVAL;
+    try {
+      const indexContent = await exMem.getIndexContent();
+      const isEmpty = !indexContent || indexContent.includes("No context recorded yet");
+      if (isEmpty) interval = COLD_START_INTERVAL;
+    } catch { /* use default interval */ }
+
+    if (turnsSinceLastCtxUpdate < interval) return;
 
     try {
       // Collect recent messages from session for consolidation
