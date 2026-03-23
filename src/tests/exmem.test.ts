@@ -227,4 +227,43 @@ Some trailing text...`;
     const raw = `<context-update></context-update>`;
     assert.equal(parseConsolidationOutput(raw), null);
   });
+
+  it("handles action-before-path attribute order", () => {
+    const raw = `<context-update>
+<file action="create" path="goals.md">
+# Goals
+- Build something
+</file>
+<file action="unchanged" path="constraints.md" />
+<file action="update" path="_index.md">
+# Project Context
+## Narrative
+Working on goals.
+## Files
+- goals.md
+</file>
+</context-update>`;
+
+    const result = parseConsolidationOutput(raw);
+    assert.ok(result);
+    assert.equal(result.files.size, 3);
+    assert.equal(result.files.get("goals.md")?.action, "create");
+    assert.ok(result.files.get("goals.md")?.content?.includes("Build something"));
+    assert.equal(result.files.get("constraints.md")?.action, "unchanged");
+    assert.equal(result.files.get("_index.md")?.action, "update");
+  });
+
+  it("handles mixed attribute orders in same output", () => {
+    const raw = `<context-update>
+<file path="a.md" action="create">content a</file>
+<file action="create" path="b.md">content b</file>
+<file path="_index.md" action="update">index</file>
+</context-update>`;
+
+    const result = parseConsolidationOutput(raw);
+    assert.ok(result);
+    assert.equal(result.files.size, 3);
+    assert.equal(result.files.get("a.md")?.action, "create");
+    assert.equal(result.files.get("b.md")?.action, "create");
+  });
 });

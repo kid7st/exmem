@@ -147,12 +147,20 @@ export function parseConsolidationOutput(raw: string): ConsolidationOutput | nul
 
   const updateContent = updateMatch[1];
 
-  // Parse each <file> tag
-  const fileRegex = /<file\s+path="([^"]+)"\s+action="(update|create|unchanged)"(?:\s*\/>|>([\s\S]*?)<\/file>)/g;
+  // Parse each <file> tag — handle both attribute orders:
+  //   <file path="..." action="...">  AND  <file action="..." path="...">
+  const fileRegex = /<file\s+(?:path="([^"]+)"\s+action="([^"]+)"|action="([^"]+)"\s+path="([^"]+)")(?:\s*\/>|>([\s\S]*?)<\/file>)/g;
   let match;
 
   while ((match = fileRegex.exec(updateContent)) !== null) {
-    const [, path, action, content] = match;
+    // Groups 1,2 = path-first order; Groups 3,4 = action-first order; Group 5 = content
+    const path = match[1] ?? match[4];
+    const action = match[2] ?? match[3];
+    const content = match[5];
+
+    if (!path || !action) continue;
+    if (!["update", "create", "unchanged"].includes(action)) continue;
+
     files.set(path, {
       action: action as FileUpdate["action"],
       content: content?.trim(),
