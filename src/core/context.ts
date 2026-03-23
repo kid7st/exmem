@@ -170,7 +170,7 @@ export class ContextManager {
     }
 
     // 4. [pinned] items preserved
-    const pinnedCheck = this.checkPinnedItems(previousSnapshot);
+    const pinnedCheck = await this.checkPinnedPreserved(previousSnapshot);
     if (!pinnedCheck.ok) {
       return pinnedCheck;
     }
@@ -214,16 +214,14 @@ export class ContextManager {
   /**
    * Check that all [pinned] items from a previous snapshot
    * still exist in the current context files.
-   * Part of post-consolidation validation (DESIGN §5.2 step 5).
+   * Delegates to findMissingPinnedItems for the actual async check.
    */
-  private checkPinnedItems(previousSnapshot: ContextSnapshot): ValidationResult {
-    const previousPinned = this.extractPinnedItems(previousSnapshot);
-    // We need to check current files for all previously pinned items
-    // But we read current files async — so this method needs the current snapshot too
-    // For simplicity, we'll do a sync check by reading current files
-    // Actually, let's make this async-compatible by returning a promise
-
-    // For now, return ok — the actual async check is done in validateAsync
+  async checkPinnedPreserved(previousSnapshot: ContextSnapshot): Promise<ValidationResult> {
+    const missing = await this.findMissingPinnedItems(previousSnapshot);
+    if (missing.size > 0) {
+      const lost = [...missing.values()].flat();
+      return { ok: false, reason: `[pinned] items lost: ${lost.join("; ")}` };
+    }
     return { ok: true };
   }
 

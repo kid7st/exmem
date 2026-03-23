@@ -113,18 +113,45 @@ export async function onBeforeCompact(
 
   let rawOutput: string;
   if (conversationTokens > exMem.config.segmentThreshold) {
+    // For segmented processing, take snapshot BEFORE any processing
+    // so rollback restores to the true original state.
+    await exMem.git.addAndCommit("[snapshot] pre-consolidation (segmented)");
     rawOutput = await processSegmented(exMem, currentContext, conversation, callLLM, signal);
-  } else {
-    // Single LLM call
-    rawOutput = await callLLM(prompt, signal);
+
+    // Parse and apply final output directly (snapshot already taken above)
+    const parsed = parseConsolidationOutput(rawOutput);
+    if (!parsed) return null;
+
+    const filesChanged = await exMem.context.applyConsolidation(parsed);
+    if (filesChanged.length === 0) return null;
+
+    // Recover pinned + validate
+    const missingPinned = await exMem.context.findMissingPinnedItems(currentContext);
+    if (missingPinned.size > 0) await exMem.context.recoverPinnedItems(missingPinned);
+
+    const validation = await exMem.context.validate(currentContext);
+    if (!validation.ok) {
+      // Rollback to pre-segmentation snapshot
+      await exMem.git.checkoutPath("HEAD", exMem.config.contextDir);
+      return null;
+    }
+
+    await exMem.git.addAll();
+    const diffStat = await exMem.git.diffStat();
+    const hash = await exMem.git.commit(`[context] consolidation (segmented)\n---\n${diffStat}`);
+
+    const summary = await exMem.getIndexContent();
+    if (!summary) return null;
+
+    return { summary, firstKeptEntryId, tokensBefore, details: { commitHash: hash, filesChanged } };
   }
+
+  // Single-call path
+  rawOutput = await callLLM(prompt, signal);
 
   // Step 4: Parse output (DESIGN §5.2 step 4)
   const parsed = parseConsolidationOutput(rawOutput);
-  if (!parsed) {
-    // Fallback: return null → Pi uses default compaction
-    return null;
-  }
+  if (!parsed) return null;
 
   // Step 5: Checkpoint (snapshot → apply → validate → commit/rollback)
   const checkpoint = await exMem.checkpoint(parsed);

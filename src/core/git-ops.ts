@@ -89,12 +89,6 @@ export class GitOps {
     return result.stdout.trim();
   }
 
-  /** Get diff stat between HEAD and working tree. */
-  async diffStatUnstaged(): Promise<string> {
-    const result = await this.exec(["diff", "--stat"]);
-    return result.stdout.trim();
-  }
-
   // ── History ────────────────────────────────────────────────────
 
   async log(args: string[] = []): Promise<string> {

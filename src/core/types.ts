@@ -64,22 +64,8 @@ export interface ContextSnapshot {
 }
 
 // ---------------------------------------------------------------------------
-// Consolidation — input/output of the compaction-time LLM call
+// Consolidation — output of the compaction-time LLM call
 // ---------------------------------------------------------------------------
-
-export interface ConsolidationInput {
-  /** Current context files */
-  currentContext: ContextSnapshot;
-
-  /** Serialized conversation to consolidate */
-  conversation: string;
-
-  /** Token budget */
-  tokenBudget: number;
-
-  /** Whether this is the first consolidation (triggers format demo) */
-  isFirstConsolidation: boolean;
-}
 
 export interface ConsolidationOutput {
   /** Updated files: path → { action, content } */
@@ -128,15 +114,11 @@ export interface AutoRecallConfig {
 
   /** Minimum score threshold to inject (default 1.0) */
   scoreThreshold: number;
-
-  /** Minimum conversation turns since last compaction before triggering (default 3) */
-  minTurnsSinceCompaction: number;
 }
 
 export const DEFAULT_RECALL_CONFIG: AutoRecallConfig = {
   maxInjectTokens: 2000,
   scoreThreshold: 1.0,
-  minTurnsSinceCompaction: 3,
 };
 
 // ---------------------------------------------------------------------------

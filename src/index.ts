@@ -1,5 +1,5 @@
 /**
- * exmem: External cognitive memory system for LLM agents.
+ * exmem: Structured working memory for LLM agents.
  *
  * Public API exports.
  */
@@ -11,7 +11,6 @@ export type {
   ExMemConfig,
   Checkpoint,
   ContextSnapshot,
-  ConsolidationInput,
   ConsolidationOutput,
   FileUpdate,
   ValidationResult,

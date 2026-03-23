@@ -9,7 +9,6 @@
  */
 
 import { ExMem } from "../core/exmem.ts";
-import { createCtxUpdateTool } from "./tools.ts";
 import { onSessionStart, onBeforeAgentStart, onBeforeCompact } from "./hooks.ts";
 import { generateWMB, shouldInjectWMB } from "./wmb.ts";
 
