@@ -31,15 +31,21 @@ export class GitOps {
           maxBuffer: 10 * 1024 * 1024, // 10MB
         },
         (error, stdout, stderr) => {
-          if (error && !("code" in error)) {
-            reject(error);
+          if (error) {
+            // System error (ENOENT, EPERM) — git binary not found or not executable
+            if (typeof (error as any).code === "string") {
+              reject(error);
+              return;
+            }
+            // Process exited with non-zero code — normal git error (e.g., grep no match)
+            resolve({
+              stdout: stdout ?? "",
+              stderr: stderr ?? "",
+              code: (error as any).code ?? 1,
+            });
             return;
           }
-          resolve({
-            stdout: stdout ?? "",
-            stderr: stderr ?? "",
-            code: (error as any)?.code ?? 0,
-          });
+          resolve({ stdout: stdout ?? "", stderr: stderr ?? "", code: 0 });
         },
       );
     });
@@ -160,11 +166,15 @@ export class GitOps {
             args,
             { cwd: undefined, timeout: 30_000 },
             (error, stdout, stderr) => {
-              if (error && !("code" in error)) {
-                reject(error);
+              if (error) {
+                if (typeof (error as any).code === "string") {
+                  reject(error); // System error (ENOENT etc.)
+                  return;
+                }
+                resolve({ stdout: stdout ?? "", stderr: stderr ?? "", code: (error as any).code ?? 1 });
                 return;
               }
-              resolve({ stdout: stdout ?? "", stderr: stderr ?? "", code: (error as any)?.code ?? 0 });
+              resolve({ stdout: stdout ?? "", stderr: stderr ?? "", code: 0 });
             },
           );
         })

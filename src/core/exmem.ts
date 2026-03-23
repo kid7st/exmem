@@ -284,28 +284,36 @@ export class ExMem {
         }
       }
 
-      // Search content
+      // Search content — batch file→commit lookup to avoid N+1
       const contentHits = await this.searchContent(keyword);
-      for (const hit of contentHits) {
-        // Find which commit last changed this file
-        const fileLog = await this.git.log([
-          "--oneline", "-1", "--", hit.file,
-        ]);
-        const hash = fileLog.split(" ")[0];
-        if (!hash) continue;
+      if (contentHits.length > 0) {
+        // Deduplicate files, then batch-lookup last commit per file
+        const uniqueFiles = [...new Set(contentHits.map((h) => h.file))];
+        const fileCommitMap = new Map<string, string>();
+        for (const file of uniqueFiles) {
+          const log = await this.git.log(["--oneline", "-1", "--", file]);
+          if (log.trim()) fileCommitMap.set(file, log.trim());
+        }
 
-        const existing = hitMap.get(hash);
-        if (existing) {
-          existing.score += 0.5;
-          existing.matchedLines.push(`[${hit.file}] ${hit.line.trim()}`);
-        } else {
-          const idx = allEntries.findIndex((e) => e.hash === hash);
-          const recency = idx >= 0 ? 1.0 / (1 + idx * 0.2) : 0.3;
-          hitMap.set(hash, {
-            entry: { hash, message: fileLog.substring(hash.length + 1), timestamp: "" },
-            matchedLines: [`[${hit.file}] ${hit.line.trim()}`],
-            score: recency * 0.5,
-          });
+        for (const hit of contentHits) {
+          const fileLog = fileCommitMap.get(hit.file);
+          if (!fileLog) continue;
+          const hash = fileLog.split(" ")[0];
+          if (!hash) continue;
+
+          const existing = hitMap.get(hash);
+          if (existing) {
+            existing.score += 0.5;
+            existing.matchedLines.push(`[${hit.file}] ${hit.line.trim()}`);
+          } else {
+            const idx = allEntries.findIndex((e) => e.hash === hash);
+            const recency = idx >= 0 ? 1.0 / (1 + idx * 0.2) : 0.3;
+            hitMap.set(hash, {
+              entry: { hash, message: fileLog.substring(hash.length + 1), timestamp: "" },
+              matchedLines: [`[${hit.file}] ${hit.line.trim()}`],
+              score: recency * 0.5,
+            });
+          }
         }
       }
     }
