@@ -156,7 +156,17 @@ export async function onBeforeCompact(
   // Step 5: Checkpoint (snapshot → apply → validate → commit/rollback)
   const checkpoint = await exMem.checkpoint(parsed);
   if (!checkpoint) {
-    // Validation failed → already rolled back
+    // No changes or validation failed → still return our maintained summary
+    // rather than falling back to Pi's default compaction
+    const existingSummary = await exMem.getIndexContent();
+    if (existingSummary && !existingSummary.includes("No context recorded yet")) {
+      return {
+        summary: existingSummary,
+        firstKeptEntryId,
+        tokensBefore,
+        details: { commitHash: "", filesChanged: [] },
+      };
+    }
     return null;
   }
 

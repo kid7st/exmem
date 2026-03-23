@@ -266,4 +266,40 @@ Working on goals.
     assert.equal(result.files.get("a.md")?.action, "create");
     assert.equal(result.files.get("b.md")?.action, "create");
   });
+
+  it("tolerates single-quoted attributes", () => {
+    const raw = `<context-update>
+<file path='notes.md' action='create'>some notes</file>
+<file path='_index.md' action='update'>
+# Project Context
+## Narrative
+Updated.
+## Files
+- notes.md
+</file>
+</context-update>`;
+
+    const result = parseConsolidationOutput(raw);
+    assert.ok(result);
+    assert.equal(result.files.size, 2);
+    assert.equal(result.files.get("notes.md")?.action, "create");
+  });
+
+  it("tolerates extra whitespace in attributes", () => {
+    const raw = `<context-update>
+<file  path="data.md"   action="create" >some data</file>
+<file  path="_index.md"  action="update" >
+# Project Context
+## Narrative
+Testing whitespace.
+## Files
+- data.md
+</file>
+</context-update>`;
+
+    const result = parseConsolidationOutput(raw);
+    assert.ok(result);
+    assert.equal(result.files.size, 2);
+    assert.equal(result.files.get("data.md")?.action, "create");
+  });
 });

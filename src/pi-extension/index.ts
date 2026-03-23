@@ -10,7 +10,7 @@
 
 import { ExMem } from "../core/exmem.ts";
 import { onSessionStart, onBeforeAgentStart, onBeforeCompact, periodicConsolidation } from "./hooks.ts";
-import { generateWMB, shouldInjectWMB } from "./wmb.ts";
+import { generateWMB, shouldInjectWMB, generateEmptyContextReminder, getConsolidationInterval } from "./wmb.ts";
 
 // ExtensionAPI type — imported dynamically to avoid hard dependency
 type ExtensionAPI = any;
@@ -21,8 +21,6 @@ export default function exMemExtension(pi: ExtensionAPI) {
   let exMem: ExMem | null = null;
   let initFailed = false;
   let turnsSinceLastCtxUpdate = 0;
-  const PERIODIC_CONSOLIDATION_INTERVAL = 20;
-  const COLD_START_INTERVAL = 5; // Much shorter when context is completely empty
 
   // ── session_start: Initialize .exmem/ (DESIGN §8) ─────────
 
@@ -93,18 +91,19 @@ export default function exMemExtension(pi: ExtensionAPI) {
       // If WMB has content, inject it
       // If context is empty but stale, inject a standalone reminder
       let injection: string | null = wmb;
-      if (!wmb && turnsSinceLastCtxUpdate >= 5) {
-        injection = `[Working Memory — no context recorded yet]\n⏰ ${turnsSinceLastCtxUpdate} turns into conversation with no context saved.\nUse ctx_update to record important information (goals, constraints, results).`;
+      if (!wmb) {
+        injection = generateEmptyContextReminder(turnsSinceLastCtxUpdate);
       }
 
       if (!injection) return;
 
       // Inject at END of message list — recency bias (DESIGN §5.7)
+      // Use "system" role so LLM treats this as background context, not user input.
       return {
         messages: [
           ...event.messages,
           {
-            role: "user" as const,
+            role: "system" as const,
             content: [{ type: "text" as const, text: injection }],
             timestamp: Date.now(),
           },
@@ -124,13 +123,13 @@ export default function exMemExtension(pi: ExtensionAPI) {
 
     // Dir 3: periodic consolidation when Agent hasn't updated context
     // Adaptive interval: shorter when context is empty (cold start)
-    let interval = PERIODIC_CONSOLIDATION_INTERVAL;
+    let contextIsEmpty = false;
     try {
       const indexContent = await exMem.getIndexContent();
-      const isEmpty = !indexContent || indexContent.includes("No context recorded yet");
-      if (isEmpty) interval = COLD_START_INTERVAL;
-    } catch { /* use default interval */ }
+      contextIsEmpty = !indexContent || indexContent.includes("No context recorded yet");
+    } catch { /* assume not empty */ }
 
+    const interval = getConsolidationInterval(contextIsEmpty);
     if (turnsSinceLastCtxUpdate < interval) return;
 
     try {
@@ -188,9 +187,15 @@ export default function exMemExtension(pi: ExtensionAPI) {
 
       if (success) {
         turnsSinceLastCtxUpdate = 0; // Reset after successful consolidation
+      } else {
+        // Reset counter on failure too — wait a full interval before retrying.
+        // Without this, counter stays >= interval and retries every turn.
+        turnsSinceLastCtxUpdate = 0;
       }
     } catch {
       // Non-critical: periodic consolidation failure doesn't affect conversation
+      // Reset to avoid retrying every subsequent turn
+      turnsSinceLastCtxUpdate = 0;
     }
   });
 
@@ -324,6 +329,11 @@ export default function exMemExtension(pi: ExtensionAPI) {
 
       // Normalize: strip leading @ (some models add it)
       const file = params.file.replace(/^@/, "");
+
+      // Path validation: prevent traversal outside context/
+      if (file.includes("..") || file.startsWith("/") || file.includes("\\")) {
+        throw new Error(`Invalid file path: "${file}". Path must be relative and within context/.`);
+      }
 
       const hash = await exMem.updateFile(file, params.content, params.message);
 

@@ -216,7 +216,6 @@ describe("autoRecall", () => {
     const result = await autoRecall(exMem, "analyze all strategy params and results", {
       maxInjectTokens: 100, // very small budget
       scoreThreshold: 0.1,
-      minTurnsSinceCompaction: 0,
     });
     if (result) {
       // ~100 tokens × 3 chars = 300 chars max

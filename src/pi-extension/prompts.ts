@@ -149,16 +149,28 @@ export function parseConsolidationOutput(raw: string): ConsolidationOutput | nul
 
   const updateContent = updateMatch[1];
 
-  // Parse each <file> tag — handle both attribute orders:
-  //   <file path="..." action="...">  AND  <file action="..." path="...">
-  const fileRegex = /<file\s+(?:path="([^"]+)"\s+action="([^"]+)"|action="([^"]+)"\s+path="([^"]+)")(?:\s*\/>|>([\s\S]*?)<\/file>)/g;
+  // Parse each <file> tag — tolerant of LLM output variations:
+  //   Attribute order: path-first or action-first
+  //   Quoting: double quotes, single quotes
+  //   Whitespace: extra spaces between attributes
+  const fileTagRegex = /<file\s+([\s\S]*?)(?:\s*\/>|>([\s\S]*?)<\/file>)/g;
+  const attrRegex = /(\w+)\s*=\s*["']([^"']+)["']/g;
   let match;
 
-  while ((match = fileRegex.exec(updateContent)) !== null) {
-    // Groups 1,2 = path-first order; Groups 3,4 = action-first order; Group 5 = content
-    const path = match[1] ?? match[4];
-    const action = match[2] ?? match[3];
-    const content = match[5];
+  while ((match = fileTagRegex.exec(updateContent)) !== null) {
+    const attrString = match[1];
+    const content = match[2];
+
+    // Extract attributes flexibly
+    const attrs: Record<string, string> = {};
+    let attrMatch;
+    while ((attrMatch = attrRegex.exec(attrString)) !== null) {
+      attrs[attrMatch[1]] = attrMatch[2];
+    }
+    attrRegex.lastIndex = 0; // Reset for next iteration
+
+    const path = attrs.path;
+    const action = attrs.action;
 
     if (!path || !action) continue;
     if (!["update", "create", "unchanged"].includes(action)) continue;

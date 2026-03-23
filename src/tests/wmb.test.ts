@@ -4,7 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { ExMem } from "../core/exmem.ts";
-import { generateWMB, shouldInjectWMB } from "../pi-extension/wmb.ts";
+import { generateWMB, shouldInjectWMB, generateEmptyContextReminder, getConsolidationInterval } from "../pi-extension/wmb.ts";
+import { periodicConsolidation } from "../pi-extension/hooks.ts";
 
 async function createPopulatedExMem(): Promise<{ exMem: ExMem; dir: string }> {
   const dir = await mkdtemp(join(tmpdir(), "exmem-wmb-test-"));
@@ -231,5 +232,129 @@ describe("shouldInjectWMB", () => {
 
   it("boundary: 21 messages = inject", () => {
     assert.equal(shouldInjectWMB(21, false), true);
+  });
+});
+
+// ── Empty-context reminder ──────────────────────────────────
+
+describe("generateEmptyContextReminder", () => {
+  it("returns null when < 5 turns", () => {
+    assert.equal(generateEmptyContextReminder(0), null);
+    assert.equal(generateEmptyContextReminder(4), null);
+  });
+
+  it("returns reminder at 5 turns", () => {
+    const r = generateEmptyContextReminder(5);
+    assert.ok(r);
+    assert.ok(r.includes("⏰"));
+    assert.ok(r.includes("5 turns"));
+    assert.ok(r.includes("ctx_update"));
+    assert.ok(r.includes("no context recorded yet"));
+  });
+
+  it("includes actual turn count", () => {
+    const r = generateEmptyContextReminder(15);
+    assert.ok(r);
+    assert.ok(r.includes("15 turns"));
+  });
+});
+
+// ── Adaptive consolidation interval ─────────────────────────
+
+describe("getConsolidationInterval", () => {
+  it("returns 5 when context is empty (cold start)", () => {
+    assert.equal(getConsolidationInterval(true), 5);
+  });
+
+  it("returns 20 when context exists (normal staleness)", () => {
+    assert.equal(getConsolidationInterval(false), 20);
+  });
+});
+
+// ── periodicConsolidation ───────────────────────────────────
+
+describe("periodicConsolidation", () => {
+  let exMem: ExMem;
+  let testDir: string;
+
+  before(async () => {
+    const dir = await mkdtemp(join(tmpdir(), "exmem-periodic-test-"));
+    exMem = new ExMem({ repoPath: join(dir, ".exmem") });
+    await exMem.init();
+    testDir = dir;
+  });
+
+  after(async () => {
+    await rm(testDir, { recursive: true, force: true });
+  });
+
+  it("returns false for empty conversation", async () => {
+    const result = await periodicConsolidation(exMem, {
+      recentConversation: "",
+      callLLM: async () => "",
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(result, false);
+  });
+
+  it("returns false when LLM output is unparseable", async () => {
+    const result = await periodicConsolidation(exMem, {
+      recentConversation: "[User]: Hello\n[Assistant]: Hi there",
+      callLLM: async () => "This is not XML at all",
+      signal: AbortSignal.timeout(5000),
+    });
+    assert.equal(result, false);
+  });
+
+  it("returns true and commits when LLM produces valid output", async () => {
+    const statusBefore = await exMem.getStatus();
+
+    const result = await periodicConsolidation(exMem, {
+      recentConversation: "[User]: Set MA to 10/30\n[Assistant]: Done",
+      callLLM: async () => `
+<context-update>
+<file path="params.md" action="create">
+# Parameters
+- MA: 10/30
+</file>
+<file path="_index.md" action="update">
+# Project Context
+
+## Narrative
+Setting up MA crossover strategy with MA 10/30.
+
+## Files
+- params.md: MA parameters
+</file>
+</context-update>`,
+      signal: AbortSignal.timeout(5000),
+    });
+
+    assert.equal(result, true);
+
+    // Verify context files were updated
+    const params = await exMem.context.readFile("params.md");
+    assert.ok(params?.includes("MA: 10/30"));
+
+    const statusAfter = await exMem.getStatus();
+    assert.ok(statusAfter.checkpoints > statusBefore.checkpoints);
+  });
+
+  it("appends format demo on first consolidation", async () => {
+    const freshDir = await mkdtemp(join(tmpdir(), "exmem-periodic-fresh-"));
+    const fresh = new ExMem({ repoPath: join(freshDir, ".exmem") });
+    await fresh.init();
+
+    let capturedPrompt = "";
+    await periodicConsolidation(fresh, {
+      recentConversation: "[User]: Hello",
+      callLLM: async (prompt) => { capturedPrompt = prompt; return "unparseable"; },
+      signal: AbortSignal.timeout(5000),
+    });
+
+    // First consolidation should include format demo
+    assert.ok(capturedPrompt.includes("Output format demo"));
+
+    await rm(freshDir, { recursive: true, force: true });
   });
 });

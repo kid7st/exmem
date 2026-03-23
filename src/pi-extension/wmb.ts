@@ -76,6 +76,30 @@ export async function generateWMB(
 const STALE_THRESHOLD = 10;
 
 /**
+ * Generate an empty-context reminder when context files have no content
+ * but conversation has been going on.
+ *
+ * This addresses the "common failure mode" where WMB returns null
+ * (because context is empty) but the agent should be reminded to start recording.
+ *
+ * Returns null if not enough turns have passed.
+ */
+export function generateEmptyContextReminder(turnsSinceLastUpdate: number): string | null {
+  if (turnsSinceLastUpdate < 5) return null;
+  return `[Working Memory — no context recorded yet]\n⏰ ${turnsSinceLastUpdate} turns into conversation with no context saved.\nUse ctx_update to record important information (goals, constraints, results).`;
+}
+
+/**
+ * Determine the consolidation interval based on context state.
+ *
+ * Cold start (context empty): 5 turns — quickly establish first context files.
+ * Stale (context exists but not updated): 20 turns.
+ */
+export function getConsolidationInterval(contextIsEmpty: boolean): number {
+  return contextIsEmpty ? 5 : 20;
+}
+
+/**
  * Determine whether WMB should be injected for this LLM call.
  *
  * Inject when:

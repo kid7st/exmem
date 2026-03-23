@@ -113,6 +113,11 @@ export class ContextManager {
 
   /** Write a single context file. Creates parent dirs if needed. */
   async writeFile(relativePath: string, content: string): Promise<void> {
+    // Path safety: prevent traversal outside context/
+    if (relativePath.includes("..") || relativePath.startsWith("/") || relativePath.includes("\\")) {
+      throw new Error(`Invalid context path: "${relativePath}". Must be relative, no traversal.`);
+    }
+
     const fullPath = join(this.contextPath, relativePath);
     const dir = fullPath.substring(0, fullPath.lastIndexOf("/"));
     if (dir !== this.contextPath) {
@@ -126,6 +131,9 @@ export class ContextManager {
     const changed: string[] = [];
     for (const [path, update] of output.files) {
       if (update.action === "unchanged" || update.content === undefined) continue;
+      // Skip if content is identical to what's already on disk
+      const existing = await this.readFile(path);
+      if (existing === update.content) continue;
       await this.writeFile(path, update.content);
       changed.push(path);
     }
@@ -235,25 +243,21 @@ export class ContextManager {
     const previousPinned = this.extractPinnedItems(previousSnapshot);
     const missing = new Map<string, string[]>();
 
+    // Read ALL current files once — pinned items may have moved between files
+    const currentSnapshot = await this.readSnapshot();
+    const allCurrentContent = [...currentSnapshot.files.values()].join("\n");
+
     for (const [path, pinnedLines] of previousPinned) {
-      const currentContent = await this.readFile(path);
-      if (!currentContent) {
-        // File was deleted — all its pinned items are missing
-        missing.set(path, [...pinnedLines]);
-        continue;
-      }
       const missingInFile: string[] = [];
       for (const pinnedLine of pinnedLines) {
-        if (!currentContent.includes(pinnedLine.replace("[pinned]", "").trim())) {
-          // Check for the core content, not just exact line match
-          // This handles minor reformatting while still catching deletions
-          const coreContent = pinnedLine
-            .replace(/^\s*[-*]\s*/, "")
-            .replace("[pinned]", "")
-            .trim();
-          if (coreContent.length > 5 && !currentContent.includes(coreContent)) {
-            missingInFile.push(pinnedLine);
-          }
+        // Extract core content (strip bullets, [pinned] tag, normalize whitespace)
+        const coreContent = pinnedLine
+          .replace(/^\s*[-*]\s*/, "")
+          .replace("[pinned]", "")
+          .trim();
+        // Check across ALL current files, not just the original file
+        if (coreContent.length > 5 && !allCurrentContent.includes(coreContent)) {
+          missingInFile.push(pinnedLine);
         }
       }
       if (missingInFile.length > 0) {

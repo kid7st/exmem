@@ -102,7 +102,7 @@ Git 的语义匹配 Context 的操作需求：
 │                                                              │
 │  Tools: read, write, bash, edit, ctx_update                  │
 ├─────────────────────────────────────────────────────────────┤
-│                     Pi Extension (4 hooks)                    │
+│                     Pi Extension (5 hooks)                    │
 │                                                              │
 │  session_start          → 初始化 .exmem/                     │
 │  before_agent_start     → system prompt + auto-recall        │
@@ -126,7 +126,7 @@ Git 的语义匹配 Context 的操作需求：
 | Extension hooks | 5 | `session_start`, `before_agent_start`, `context`, `agent_end`, `session_before_compact` |
 | 必需文件 | 1 | `_index.md` |
 | 额外存储 | 1 | `.exmem/` git 仓库 |
-| LLM 额外调用 | 0 | 固化替换 Pi 默认摘要生成；WMB 纯代码生成 |
+| LLM 额外调用 | 0 正常路径 | 固化替换 Pi 默认摘要；WMB 纯代码。Agent 不活跃时 periodic consolidation 触发额外 LLM 调用（每 20 轮一次） |
 
 ---
 
@@ -326,21 +326,28 @@ Output:
 **WMB 由纯代码生成，零 LLM 调用，延迟 ~1ms：**
 
 ```typescript
-function generateWMB(indexContent, allFiles, fileNames): string {
+async function generateWMB(exMem, turnsSinceLastUpdate?): Promise<string | null> {
   // 1. 完整 Narrative (不截取——context 空间充足)
-  const narrative = extractNarrative(indexContent);
+  const narrative = extractNarrative(await exMem.getIndexContent());
+  if (!narrative) return null;
 
-  // 2. [pinned] 项扫描 (所有文件, 最多展示 5 个)
-  const pinned = scanPinnedItems(allFiles);
+  // 2. [pinned] 项扫描 (所有文件, 去重, 最多展示 5 个)
+  const pinned = scanPinnedItems(await exMem.context.readSnapshot());
 
   // 3. 文件列表
-  const files = fileNames.filter(f => f !== "_index.md");
+  const files = contextFiles.filter(f => f !== "_index.md");
 
   // 4. 组装
-  return `[Working Memory — review before responding]
-📝 ${narrative}
-${pinned.map(p => `⚠️ ${p}`).join("\n")}
-📁 ${files.join(", ")}`;
+  let wmb = `[Working Memory — review before responding]\n`;
+  wmb += `📝 ${narrative}\n`;
+  wmb += pinned.map(p => `⚠️ ${p}`).join("\n");
+  wmb += `\n📁 ${files.join(", ")}`;
+
+  // 5. Staleness 提醒 (≥10 轮未更新)
+  if (turnsSinceLastUpdate >= 10)
+    wmb += `\n⏰ Context last updated ${turnsSinceLastUpdate} turns ago`;
+
+  return wmb;
 }
 ```
 
@@ -362,18 +369,24 @@ WMB 末尾显示 `⏰ Context last updated N turns ago — consider using ctx_up
 ### 5.8 主动 Consolidation（1M Context 安全网）
 
 在 1M context 下 compaction 可能整个 session 不触发。
-`agent_end` hook 每轮递增计数，当 Agent 连续 N 轮（默认 20）
+`agent_end` hook 每轮递增计数器。当 Agent 连续 N 轮
 未调用 ctx_update 时，自动触发一次 consolidation——
 复用 §5.3-5.4 的 prompt 和 parsing，但不触发 Pi compaction。
+
+**自适应间隔：**
+- Context 为空（冷启动）：N = 5 轮（快速建立首批 context 文件）
+- Context 已存在但陈旧：N = 20 轮
 
 ```
 agent_end 触发
     │
     ├─ turnsSinceLastCtxUpdate++
     │
-    ├─ if < N → 跳过
+    ├─ 自适应间隔: isEmpty ? 5 : 20
     │
-    ├─ if ≥ N:
+    ├─ if < interval → 跳过
+    │
+    ├─ if ≥ interval:
     │    收集最近 N×3 条 message entry (从 sessionManager)
     │    序列化为对话文本
     │    调用 consolidation prompt + parsing
@@ -381,6 +394,15 @@ agent_end 触发
     │    成功 → 重置计数器
     │
     └─ 失败 → 静默，下一个 interval 重试
+```
+
+**Empty-context 提醒**：当 context 为空且对话已进行 ≥5 轮时，
+context hook 注入独立的提醒消息（不依赖 WMB，因为 WMB 在空 context 时返回 null）：
+
+```
+[Working Memory — no context recorded yet]
+⏰ N turns into conversation with no context saved.
+Use ctx_update to record important information (goals, constraints, results).
 ```
 
 这是"同步"而非"压缩"——更新 context 文件但不删除对话消息。
@@ -440,13 +462,13 @@ bash("cd .exmem && git diff ghi9012 abc1234 -- context/")              # 对比
 
 You have a structured working memory at `.exmem/`, version-controlled with Git.
 
-**Maintain context** — Use ctx_update when you encounter:
-- Constraints/requirements ("must", "don't", "limit")
+**Maintain context** — After completing each task step or receiving results,
+use ctx_update to record what you learned and what changed:
+- Constraints/requirements — mark as [pinned]
 - Quantitative results (numbers, percentages, metrics)
-- Parameter changes ("change to", "set to")
-- Decisions ("decided to use", "chose")
+- Parameter/config changes
+- Decisions and rationale
 - Goal changes ("next we'll do", "put X on hold")
-Mark critical constraints as [pinned]: `MaxDD ≤ 25% [pinned]`
 
 **Review context** — In long conversations, refresh your understanding:
   read(".exmem/context/_index.md")

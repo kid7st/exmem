@@ -71,15 +71,16 @@ export class GitOps {
   }
 
   async commit(message: string): Promise<string> {
-    const result = await this.execOrThrow(["commit", "-m", message, "--allow-empty"]);
+    const result = await this.execOrThrow(["commit", "-m", message]);
     // Extract short hash from commit output
     const match = result.stdout.match(/\[[\w-]+ ([a-f0-9]+)\]/);
     return match?.[1] ?? "";
   }
 
-  /** Stage + commit. Returns commit hash. */
+  /** Stage + commit. Returns commit hash, or empty string if nothing to commit. */
   async addAndCommit(message: string): Promise<string> {
     await this.addAll();
+    if (!(await this.hasChanges())) return "";
     return this.commit(message);
   }
 
